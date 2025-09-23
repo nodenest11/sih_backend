@@ -29,6 +29,16 @@ Currently **no authentication** is required. All endpoints are open for developm
   - 50-69: Medium risk (yellow)
   - 70-100: Low risk (green)
 
+### Score Changes
+- **Panic Alert**: -40 points
+- **Geofence Entry**: -10 to -30 points (based on zone risk level)
+  - Low risk zone: -10 points
+  - Medium risk zone: -20 points  
+  - High risk zone: -30 points
+- **Geofence Exit**: +5 points (safe exit bonus)
+- **Safe Check-in**: +5 points
+- **Safe Duration (1 hour)**: +10 points
+
 ### Alert Types
 - **panic**: Emergency/distress alert
 - **geofence**: Entered restricted area
@@ -253,6 +263,57 @@ fetch(`/locations/heatmap?${params}`)
 - `medium`: Intensity 21-40 (moderate activity, some concerns)
 - `high`: Intensity 41+ (high tourist density, alerts, low safety scores)
 
+#### GET /locations/restrictedZones (or /restrictedZones)
+Get all restricted zones with polygon coordinates for geofencing
+```javascript
+// Get all restricted zones for geofencing
+fetch('/restrictedZones')
+  .then(res => res.json())
+  .then(data => {
+    console.log(`Found ${data.zones.length} restricted zones`);
+    data.zones.forEach(zone => {
+      console.log(`Zone: ${zone.name} (${zone.risk_level} risk)`);
+      // Add geofence to map
+      addGeofenceToMap(zone.polygon_coordinates, zone.risk_level);
+    });
+  });
+```
+
+**Response Example:**
+```json
+{
+  "zones": [
+    {
+      "id": 1,
+      "name": "Red Fort Restricted Area",
+      "risk_level": "high",
+      "polygon_coordinates": [
+        {"lat": 28.6562, "lon": 77.2410},
+        {"lat": 28.6572, "lon": 77.2420},
+        {"lat": 28.6552, "lon": 77.2430},
+        {"lat": 28.6542, "lon": 77.2415}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Airport Security Zone",
+      "risk_level": "medium",
+      "polygon_coordinates": [
+        {"lat": 13.1979, "lon": 77.7063},
+        {"lat": 13.1999, "lon": 77.7083},
+        {"lat": 13.1959, "lon": 77.7103},
+        {"lat": 13.1939, "lon": 77.7073}
+      ]
+    }
+  ]
+}
+```
+
+**Zone Risk Levels:**
+- `low`: Minor restrictions, -10 safety score penalty
+- `medium`: Moderate risk, -20 safety score penalty  
+- `high`: Dangerous areas, -30 safety score penalty
+
 ---
 
 ### 🚨 Alert System
@@ -278,6 +339,75 @@ fetch('/alerts/panic', {
   // Safety score automatically reduced by 40 points
 });
 ```
+
+#### POST /alerts/geofence-entry
+Log zone entry/exit events with automatic safety score adjustment
+```javascript
+// Log entering a restricted zone
+const geofenceEntry = {
+  tourist_id: 101,
+  latitude: 28.6562,
+  longitude: 77.2410,
+  zone_id: 1,
+  zone_name: "Red Fort",
+  entry_type: "enter"  // or "exit"
+};
+
+fetch('/alerts/geofence-entry', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify(geofenceEntry)
+})
+.then(res => res.json())
+.then(alert => {
+  console.log('Geofence event logged:', alert.entry_type);
+  console.log('Safety score impact:', alert.safety_score_impact);
+  console.log('Zone:', alert.zone_name);
+});
+
+// Log exiting a restricted zone
+const geofenceExit = {
+  tourist_id: 101,
+  latitude: 28.6565,
+  longitude: 77.2415,
+  zone_id: 1,
+  zone_name: "Red Fort",
+  entry_type: "exit"
+};
+
+fetch('/alerts/geofence-entry', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify(geofenceExit)
+})
+.then(res => res.json())
+.then(alert => {
+  console.log('Safely exited zone, bonus:', alert.safety_score_impact); // +5 points
+});
+```
+
+**Geofence Alert Response:**
+```json
+{
+  "id": 15,
+  "tourist_id": 101,
+  "zone_id": 1,
+  "zone_name": "Red Fort",
+  "latitude": 28.6562,
+  "longitude": 77.2410,
+  "entry_type": "enter",
+  "safety_score_impact": -30,
+  "timestamp": "2025-09-23T16:47:25",
+  "tourist_name": "John Doe"
+}
+```
+
+**Safety Score Impact:**
+- **Zone Entry (enter):**
+  - Low risk zones: -10 points
+  - Medium risk zones: -20 points
+  - High risk zones: -30 points
+- **Zone Exit (exit):** +5 points (bonus for leaving safely)
 
 #### POST /alerts/geofence
 Create geofence violation alert
@@ -584,6 +714,210 @@ const PanicButton = ({ touristId }) => {
 };
 ```
 
+#### Geofencing Implementation
+```javascript
+// Complete geofencing implementation for mobile app
+class GeofenceManager {
+  constructor(touristId) {
+    this.touristId = touristId;
+    this.restrictedZones = [];
+    this.currentLocation = null;
+    this.insideZones = new Set(); // Track which zones tourist is currently in
+  }
+  
+  async initializeGeofences() {
+    // Fetch all restricted zones
+    const response = await fetch('/restrictedZones');
+    const data = await response.json();
+    this.restrictedZones = data.zones;
+    
+    console.log(`Loaded ${this.restrictedZones.length} geofences`);
+    return this.restrictedZones;
+  }
+  
+  // Point-in-polygon detection using ray casting algorithm
+  isPointInPolygon(lat, lon, polygon) {
+    let inside = false;
+    const x = lat, y = lon;
+    
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].lat, yi = polygon[i].lon;
+      const xj = polygon[j].lat, yj = polygon[j].lon;
+      
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  
+  async checkLocation(latitude, longitude) {
+    this.currentLocation = { latitude, longitude };
+    
+    for (const zone of this.restrictedZones) {
+      const isInside = this.isPointInPolygon(latitude, longitude, zone.polygon_coordinates);
+      const wasInside = this.insideZones.has(zone.id);
+      
+      if (isInside && !wasInside) {
+        // Entered zone
+        this.insideZones.add(zone.id);
+        await this.logGeofenceEvent(zone, 'enter');
+        this.onZoneEntered(zone);
+      } else if (!isInside && wasInside) {
+        // Exited zone
+        this.insideZones.delete(zone.id);
+        await this.logGeofenceEvent(zone, 'exit');
+        this.onZoneExited(zone);
+      }
+    }
+  }
+  
+  async logGeofenceEvent(zone, entryType) {
+    const eventData = {
+      tourist_id: this.touristId,
+      latitude: this.currentLocation.latitude,
+      longitude: this.currentLocation.longitude,
+      zone_id: zone.id,
+      zone_name: zone.name,
+      entry_type: entryType
+    };
+    
+    try {
+      const response = await fetch('/alerts/geofence-entry', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(eventData)
+      });
+      
+      const result = await response.json();
+      console.log(`Geofence ${entryType}:`, result);
+      return result;
+    } catch (error) {
+      console.error('Failed to log geofence event:', error);
+    }
+  }
+  
+  onZoneEntered(zone) {
+    // Show notification to user
+    if ('Notification' in window) {
+      new Notification(`⚠️ Entered ${zone.risk_level} risk zone`, {
+        body: `You have entered ${zone.name}. Please be cautious.`,
+        icon: '/alert-icon.png'
+      });
+    }
+    
+    // Update UI
+    this.showGeofenceAlert(zone, 'entered');
+  }
+  
+  onZoneExited(zone) {
+    // Show exit notification
+    if ('Notification' in window) {
+      new Notification(`✅ Exited restricted zone`, {
+        body: `You have safely left ${zone.name}.`,
+        icon: '/success-icon.png'
+      });
+    }
+    
+    // Update UI
+    this.showGeofenceAlert(zone, 'exited');
+  }
+  
+  showGeofenceAlert(zone, action) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `geofence-alert ${zone.risk_level}-risk`;
+    alertDiv.innerHTML = `
+      <h3>${action === 'entered' ? '⚠️' : '✅'} ${zone.name}</h3>
+      <p>You have ${action} a ${zone.risk_level} risk zone</p>
+      <p>Risk Level: ${zone.risk_level}</p>
+    `;
+    
+    document.body.appendChild(alertDiv);
+    
+    // Remove alert after 5 seconds
+    setTimeout(() => alertDiv.remove(), 5000);
+  }
+}
+
+// Usage in mobile app
+const geofenceManager = new GeofenceManager(101); // tourist ID
+
+// Initialize geofences when app starts
+geofenceManager.initializeGeofences().then(() => {
+  console.log('Geofences loaded successfully');
+});
+
+// Check location every time GPS updates
+navigator.geolocation.watchPosition(
+  (position) => {
+    const { latitude, longitude } = position.coords;
+    
+    // Update location on server
+    fetch('/locations/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        tourist_id: 101,
+        latitude,
+        longitude
+      })
+    });
+    
+    // Check geofences
+    geofenceManager.checkLocation(latitude, longitude);
+  },
+  (error) => console.error('Location error:', error),
+  { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+);
+```
+
+#### Map Integration with Geofences
+```javascript
+// Example using Leaflet.js map library
+const initializeMapWithGeofences = async () => {
+  // Initialize map
+  const map = L.map('map').setView([28.6139, 77.2090], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  
+  // Fetch and display restricted zones
+  const response = await fetch('/restrictedZones');
+  const data = await response.json();
+  
+  data.zones.forEach(zone => {
+    // Convert coordinates for Leaflet
+    const coordinates = zone.polygon_coordinates.map(coord => [coord.lat, coord.lon]);
+    
+    // Color based on risk level
+    const colors = {
+      low: '#ffeb3b',     // Yellow
+      medium: '#ff9800',  // Orange
+      high: '#f44336'     // Red
+    };
+    
+    // Add polygon to map
+    L.polygon(coordinates, {
+      color: colors[zone.risk_level],
+      fillColor: colors[zone.risk_level],
+      fillOpacity: 0.3,
+      weight: 2
+    })
+    .bindPopup(`
+      <b>${zone.name}</b><br>
+      Risk Level: ${zone.risk_level}<br>
+      Zone ID: ${zone.id}
+    `)
+    .addTo(map);
+  });
+  
+  return map;
+};
+
+// Initialize map when page loads
+initializeMapWithGeofences().then(map => {
+  console.log('Map with geofences loaded');
+});
+```
+
 ---
 
 ## Error Handling
@@ -675,6 +1009,35 @@ interface Alert {
   timestamp: string; // ISO datetime
   status: 'active' | 'resolved';
   resolved_at: string | null; // ISO datetime
+  tourist_name?: string; // Included in some responses
+}
+```
+
+### RestrictedZone Object
+```typescript
+interface RestrictedZone {
+  id: number;
+  name: string;
+  risk_level: 'low' | 'medium' | 'high';
+  polygon_coordinates: Array<{
+    lat: number; // -90 to 90
+    lon: number; // -180 to 180
+  }>;
+}
+```
+
+### GeofenceAlert Object
+```typescript
+interface GeofenceAlert {
+  id: number;
+  tourist_id: number;
+  zone_id: number;
+  zone_name: string;
+  latitude: number;
+  longitude: number;
+  entry_type: 'enter' | 'exit';
+  safety_score_impact: number; // Negative for penalties, positive for bonuses
+  timestamp: string; // ISO datetime
   tourist_name?: string; // Included in some responses
 }
 ```

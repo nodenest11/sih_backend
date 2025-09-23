@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from database import get_db
-from models import Alert, Tourist, AlertType, AlertStatus, RestrictedZone
-from schemas import PanicAlertCreate, GeofenceAlertCreate, AlertResponse
+from models import Alert, Tourist, AlertType, AlertStatus, RestrictedZone, GeofenceAlert
+from schemas import PanicAlertCreate, GeofenceAlertCreate, AlertResponse, GeofenceEntryCreate, GeofenceAlertResponse
 from typing import List
 from datetime import datetime
 import json
@@ -125,6 +125,67 @@ def create_geofence_alert(alert_data: GeofenceAlertCreate, db: Session = Depends
     
     # Add tourist name to response
     response = AlertResponse.from_orm(db_alert)
+    response.tourist_name = tourist.name
+    
+    return response
+
+@router.post("/geofence-entry", response_model=GeofenceAlertResponse, status_code=status.HTTP_201_CREATED)
+def log_geofence_entry(entry_data: GeofenceEntryCreate, db: Session = Depends(get_db)):
+    """Log zone entry/exit and update safety score based on zone risk level"""
+    # Check if tourist exists
+    tourist = db.query(Tourist).filter(Tourist.id == entry_data.tourist_id).first()
+    if not tourist:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tourist not found"
+        )
+    
+    # Check if zone exists
+    zone = db.query(RestrictedZone).filter(RestrictedZone.id == entry_data.zone_id).first()
+    if not zone:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Restricted zone not found"
+        )
+    
+    # Calculate safety score impact based on zone risk level and entry type
+    safety_score_impact = 0
+    if entry_data.entry_type.value == "enter":
+        # Entering a restricted zone - penalty based on risk level
+        if zone.risk_level <= 3:  # Low risk
+            safety_score_impact = -10
+        elif zone.risk_level <= 6:  # Medium risk
+            safety_score_impact = -20
+        else:  # High risk (7-10)
+            safety_score_impact = -30
+    else:  # exit
+        # Exiting a restricted zone - small bonus for leaving safely
+        safety_score_impact = 5
+    
+    # Create geofence alert entry
+    db_geofence_alert = GeofenceAlert(
+        tourist_id=entry_data.tourist_id,
+        zone_id=entry_data.zone_id,
+        zone_name=entry_data.zone_name,
+        latitude=entry_data.latitude,
+        longitude=entry_data.longitude,
+        entry_type=entry_data.entry_type,
+        safety_score_impact=safety_score_impact
+    )
+    
+    db.add(db_geofence_alert)
+    
+    # Update tourist safety score
+    if entry_data.entry_type.value == "enter":
+        tourist.safety_score = max(0, tourist.safety_score + safety_score_impact)
+    else:  # exit
+        tourist.safety_score = min(100, tourist.safety_score + safety_score_impact)
+    
+    db.commit()
+    db.refresh(db_geofence_alert)
+    
+    # Add tourist name to response
+    response = GeofenceAlertResponse.from_orm(db_geofence_alert)
     response.tourist_name = tourist.name
     
     return response

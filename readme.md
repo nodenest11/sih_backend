@@ -159,6 +159,9 @@ curl -X POST "http://localhost:8000/alerts/panic" \
 ### RestrictedZone
 - id, name, description, polygon_coordinates, risk_level
 
+### GeofenceAlert
+- id, tourist_id, zone_id, zone_name, latitude, longitude, entry_type, safety_score_impact, timestamp
+
 ## Development
 
 ### Project Structure

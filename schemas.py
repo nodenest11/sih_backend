@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
-from models import AlertType, AlertStatus
+from models import AlertType, AlertStatus, EntryType
 
 # Tourist Schemas
 class TouristCreate(BaseModel):
@@ -72,6 +72,46 @@ class SafetyScoreUpdate(BaseModel):
     tourist_id: int
     score_change: int
     reason: str
+
+# Geofencing Schemas
+class PolygonCoordinate(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+
+class RestrictedZoneResponse(BaseModel):
+    id: int
+    name: str
+    risk_level: str  # "low", "medium", "high"
+    polygon_coordinates: List[PolygonCoordinate]
+    
+    class Config:
+        from_attributes = True
+
+class RestrictedZonesResponse(BaseModel):
+    zones: List[RestrictedZoneResponse]
+
+class GeofenceEntryCreate(BaseModel):
+    tourist_id: int
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    zone_id: int
+    zone_name: str
+    entry_type: EntryType
+
+class GeofenceAlertResponse(BaseModel):
+    id: int
+    tourist_id: int
+    zone_id: int
+    zone_name: str
+    latitude: float
+    longitude: float
+    entry_type: EntryType
+    safety_score_impact: int
+    timestamp: datetime
+    tourist_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
 
 # Heatmap Schemas
 class HeatmapPoint(BaseModel):

@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, and_
 from database import get_db
-from models import Location, Tourist, Alert, AlertStatus
-from schemas import LocationUpdate, LocationResponse, HeatmapResponse, HeatmapPoint
+from models import Location, Tourist, Alert, AlertStatus, RestrictedZone
+from schemas import LocationUpdate, LocationResponse, HeatmapResponse, HeatmapPoint, RestrictedZonesResponse, RestrictedZoneResponse, PolygonCoordinate
 from typing import List, Optional
 from datetime import datetime, timedelta
+import json
 
 router = APIRouter()
 
@@ -277,4 +278,56 @@ def get_location_heatmap(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating heatmap: {str(e)}"
+        )
+
+@router.get("/restrictedZones", response_model=RestrictedZonesResponse)
+def get_restricted_zones(db: Session = Depends(get_db)):
+    """Get all restricted zones with polygon coordinates for geofencing"""
+    try:
+        zones = db.query(RestrictedZone).all()
+        
+        zone_responses = []
+        for zone in zones:
+            # Parse polygon coordinates from JSON string
+            try:
+                coordinates_data = json.loads(zone.polygon_coordinates)
+                polygon_coords = []
+                
+                for coord in coordinates_data:
+                    if isinstance(coord, list) and len(coord) >= 2:
+                        # Handle [lat, lon] format
+                        polygon_coords.append(PolygonCoordinate(lat=coord[0], lon=coord[1]))
+                    elif isinstance(coord, dict) and "lat" in coord and "lon" in coord:
+                        # Handle {"lat": value, "lon": value} format
+                        polygon_coords.append(PolygonCoordinate(lat=coord["lat"], lon=coord["lon"]))
+                    else:
+                        print(f"Invalid coordinate format: {coord}")
+                        continue
+                
+                # Convert risk_level number to string
+                if zone.risk_level <= 3:
+                    risk_level = "low"
+                elif zone.risk_level <= 6:
+                    risk_level = "medium"
+                else:
+                    risk_level = "high"
+                
+                zone_response = RestrictedZoneResponse(
+                    id=zone.id,
+                    name=zone.name,
+                    risk_level=risk_level,
+                    polygon_coordinates=polygon_coords
+                )
+                zone_responses.append(zone_response)
+                
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Error parsing coordinates for zone {zone.id}: {e}")
+                continue
+        
+        return RestrictedZonesResponse(zones=zone_responses)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching restricted zones: {str(e)}"
         )

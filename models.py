@@ -8,6 +8,10 @@ class AlertType(enum.Enum):
     panic = "panic"
     geofence = "geofence"
 
+class EntryType(enum.Enum):
+    enter = "enter"
+    exit = "exit"
+
 class AlertStatus(enum.Enum):
     active = "active"
     resolved = "resolved"
@@ -66,3 +70,23 @@ class RestrictedZone(Base):
     polygon_coordinates = Column(Text, nullable=False)
     risk_level = Column(Integer, default=5)  # 1-10 scale
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    geofence_alerts = relationship("GeofenceAlert", back_populates="zone")
+
+class GeofenceAlert(Base):
+    __tablename__ = "geofence_alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    tourist_id = Column(Integer, ForeignKey("tourists.id"), nullable=False)
+    zone_id = Column(Integer, ForeignKey("restricted_zones.id"), nullable=False)
+    zone_name = Column(String(100), nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    entry_type = Column(Enum(EntryType), nullable=False)
+    safety_score_impact = Column(Integer, default=0)  # Negative for penalties
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    tourist = relationship("Tourist")
+    zone = relationship("RestrictedZone", back_populates="geofence_alerts")

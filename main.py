@@ -34,6 +34,12 @@ def get_heatmap_redirect():
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/locations/heatmap")
 
+@app.get("/restrictedZones")
+def get_restricted_zones_redirect():
+    """Redirect to the restricted zones endpoint"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/locations/restrictedZones")
+
 @app.get("/")
 def read_root():
     return {"message": "Smart Tourist Safety & Incident Response System API"}

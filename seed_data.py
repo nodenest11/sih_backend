@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine
-from models import Base, Tourist, Location, Alert, RestrictedZone, AlertType, AlertStatus
+from models import Base, Tourist, Location, Alert, RestrictedZone, GeofenceAlert, AlertType, AlertStatus, EntryType
 from datetime import datetime, timedelta
 import random
 import json
@@ -242,6 +242,69 @@ def create_sample_alerts(db: Session):
     db.commit()
     print(f"Created {num_alerts} sample alerts")
 
+def create_sample_geofence_alerts(db: Session):
+    """Create some sample geofence entry/exit alerts"""
+    tourists = db.query(Tourist).all()
+    zones = db.query(RestrictedZone).all()
+    
+    if not tourists or not zones:
+        print("No tourists or zones found for geofence alerts")
+        return
+    
+    # Create 15-20 geofence entry/exit events
+    num_geofence_alerts = random.randint(15, 20)
+    
+    for i in range(num_geofence_alerts):
+        tourist = random.choice(tourists)
+        zone = random.choice(zones)
+        entry_type = random.choice([EntryType.enter, EntryType.exit])
+        
+        # Parse zone coordinates to get a point within the zone
+        try:
+            coordinates = json.loads(zone.polygon_coordinates)
+            if coordinates:
+                # Get center point of polygon (simple average)
+                avg_lat = sum(coord[0] for coord in coordinates) / len(coordinates)
+                avg_lon = sum(coord[1] for coord in coordinates) / len(coordinates)
+                
+                # Add small random offset
+                lat = avg_lat + random.uniform(-0.001, 0.001)
+                lon = avg_lon + random.uniform(-0.001, 0.001)
+            else:
+                continue
+        except:
+            continue
+        
+        # Calculate safety score impact based on zone risk level and entry type
+        if entry_type == EntryType.enter:
+            if zone.risk_level <= 3:  # Low risk
+                safety_score_impact = -10
+            elif zone.risk_level <= 6:  # Medium risk
+                safety_score_impact = -20
+            else:  # High risk
+                safety_score_impact = -30
+        else:  # exit
+            safety_score_impact = 5
+        
+        hours_ago = random.randint(1, 48)
+        timestamp = datetime.utcnow() - timedelta(hours=hours_ago)
+        
+        geofence_alert = GeofenceAlert(
+            tourist_id=tourist.id,
+            zone_id=zone.id,
+            zone_name=zone.name,
+            latitude=lat,
+            longitude=lon,
+            entry_type=entry_type,
+            safety_score_impact=safety_score_impact,
+            timestamp=timestamp
+        )
+        
+        db.add(geofence_alert)
+    
+    db.commit()
+    print(f"Created {num_geofence_alerts} sample geofence alerts")
+
 def seed_database():
     """Main function to seed the database with sample data"""
     print("Starting database seeding...")
@@ -264,6 +327,7 @@ def seed_database():
         create_sample_tourists(db, 100)
         create_sample_locations(db)
         create_sample_alerts(db)
+        create_sample_geofence_alerts(db)
         
         print("Database seeding completed successfully!")
         
@@ -272,12 +336,14 @@ def seed_database():
         location_count = db.query(Location).count()
         alert_count = db.query(Alert).count()
         zone_count = db.query(RestrictedZone).count()
+        geofence_alert_count = db.query(GeofenceAlert).count()
         
         print(f"\nSummary:")
         print(f"- Tourists: {tourist_count}")
         print(f"- Locations: {location_count}")
         print(f"- Alerts: {alert_count}")
         print(f"- Restricted Zones: {zone_count}")
+        print(f"- Geofence Alerts: {geofence_alert_count}")
         
     except Exception as e:
         print(f"Error during seeding: {e}")

@@ -1,188 +1,170 @@
-from sqlalchemy.orm import Session
-from models import Tourist, Alert, Location, AlertType
-from datetime import datetime, timedelta
+from supabase_client import get_supabase_admin
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 import json
 
-class SafetyScoreService:
-    """Service for calculating and updating tourist safety scores"""
-    
-    # Score changes based on events
-    SCORE_CHANGES = {
-        "panic_alert": -40,
-        "geofence_violation": -20,
-        "safe_duration_1hr": +10,
-        "safe_check_in": +5,
-        "emergency_contact_update": +2
-    }
+supabase = get_supabase_admin()
+
+class TouristService:
+    @staticmethod
+    def create_tourist(tourist_data: Dict[str, Any]) -> Dict[str, Any]:
+        tourist_data['safety_score'] = 100
+        tourist_data['created_at'] = datetime.utcnow().isoformat()
+        
+        result = supabase.table('tourists').insert(tourist_data).execute()
+        return result.data[0] if result.data else None
     
     @staticmethod
-    def update_score_for_panic(tourist_id: int, db: Session) -> int:
-        """Update safety score when panic alert is triggered"""
-        tourist = db.query(Tourist).filter(Tourist.id == tourist_id).first()
-        if not tourist:
-            return 0
-        
-        old_score = tourist.safety_score
-        new_score = max(0, old_score + SafetyScoreService.SCORE_CHANGES["panic_alert"])
-        tourist.safety_score = new_score
-        
-        db.commit()
-        return new_score - old_score
+    def get_tourist(tourist_id: int) -> Optional[Dict[str, Any]]:
+        result = supabase.table('tourists').select('*').eq('id', tourist_id).execute()
+        return result.data[0] if result.data else None
     
     @staticmethod
-    def update_score_for_geofence(tourist_id: int, db: Session) -> int:
-        """Update safety score when geofence violation occurs"""
-        tourist = db.query(Tourist).filter(Tourist.id == tourist_id).first()
+    def update_safety_score(tourist_id: int, change: int, reason: str) -> bool:
+        tourist = TouristService.get_tourist(tourist_id)
         if not tourist:
-            return 0
+            return False
         
-        old_score = tourist.safety_score
-        new_score = max(0, old_score + SafetyScoreService.SCORE_CHANGES["geofence_violation"])
-        tourist.safety_score = new_score
+        new_score = max(0, min(100, tourist['safety_score'] + change))
         
-        db.commit()
-        return new_score - old_score
+        result = supabase.table('tourists').update({
+            'safety_score': new_score,
+            'updated_at': datetime.utcnow().isoformat()
+        }).eq('id', tourist_id).execute()
+        
+        return len(result.data) > 0
+
+class LocationService:
+    @staticmethod
+    def update_location(tourist_id: int, latitude: float, longitude: float) -> Dict[str, Any]:
+        location_data = {
+            'tourist_id': tourist_id,
+            'latitude': latitude,
+            'longitude': longitude,
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        
+        result = supabase.table('locations').insert(location_data).execute()
+        return result.data[0] if result.data else None
     
     @staticmethod
-    def check_and_update_safe_duration(tourist_id: int, db: Session) -> int:
-        """Check if tourist has been safe for 1 hour and update score"""
-        tourist = db.query(Tourist).filter(Tourist.id == tourist_id).first()
-        if not tourist:
-            return 0
+    def get_all_locations() -> List[Dict[str, Any]]:
+        result = supabase.table('locations').select('*').order('timestamp', desc=True).execute()
         
-        # Check for any active alerts in the last hour
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        recent_alerts = (
-            db.query(Alert)
-            .filter(
-                Alert.tourist_id == tourist_id,
-                Alert.timestamp >= one_hour_ago
-            )
-            .count()
-        )
+        latest_locations = {}
+        for location in result.data:
+            tourist_id = location['tourist_id']
+            if tourist_id not in latest_locations:
+                latest_locations[tourist_id] = location
         
-        # If no alerts in the last hour, award safe duration points
-        if recent_alerts == 0:
-            old_score = tourist.safety_score
-            new_score = min(100, old_score + SafetyScoreService.SCORE_CHANGES["safe_duration_1hr"])
-            tourist.safety_score = new_score
-            
-            db.commit()
-            return new_score - old_score
+        return list(latest_locations.values())
+
+class AlertService:
+    @staticmethod
+    def create_panic_alert(tourist_id: int, latitude: float, longitude: float) -> Dict[str, Any]:
+        tourist = TouristService.get_tourist(tourist_id)
+        tourist_name = tourist['name'] if tourist else f"Tourist {tourist_id}"
         
-        return 0
+        alert_data = {
+            'tourist_id': tourist_id,
+            'type': 'panic',
+            'message': f"PANIC ALERT: {tourist_name} has triggered an emergency alert at coordinates ({latitude}, {longitude})",
+            'timestamp': datetime.utcnow().isoformat(),
+            'status': 'active',
+            'latitude': latitude,
+            'longitude': longitude
+        }
+        
+        result = supabase.table('alerts').insert(alert_data).execute()
+        
+        if result.data:
+            TouristService.update_safety_score(tourist_id, -40, "Panic alert triggered")
+        
+        return result.data[0] if result.data else None
     
     @staticmethod
-    def update_score_for_safe_checkin(tourist_id: int, db: Session) -> int:
-        """Update safety score for regular location check-in"""
-        tourist = db.query(Tourist).filter(Tourist.id == tourist_id).first()
-        if not tourist:
-            return 0
+    def create_geofence_alert(tourist_id: int, latitude: float, longitude: float, zone_name: str) -> Dict[str, Any]:
+        tourist = TouristService.get_tourist(tourist_id)
+        tourist_name = tourist['name'] if tourist else f"Tourist {tourist_id}"
         
-        # Award points for regular check-ins (max once per 30 minutes)
-        thirty_minutes_ago = datetime.utcnow() - timedelta(minutes=30)
-        recent_locations = (
-            db.query(Location)
-            .filter(
-                Location.tourist_id == tourist_id,
-                Location.timestamp >= thirty_minutes_ago
-            )
-            .count()
-        )
+        alert_data = {
+            'tourist_id': tourist_id,
+            'type': 'geofence',
+            'message': f"GEOFENCE ALERT: {tourist_name} has entered restricted zone '{zone_name}' at coordinates ({latitude}, {longitude})",
+            'timestamp': datetime.utcnow().isoformat(),
+            'status': 'active',
+            'latitude': latitude,
+            'longitude': longitude
+        }
         
-        # Only award points if this is the first check-in in 30 minutes
-        if recent_locations <= 1:
-            old_score = tourist.safety_score
-            new_score = min(100, old_score + SafetyScoreService.SCORE_CHANGES["safe_check_in"])
-            tourist.safety_score = new_score
-            
-            db.commit()
-            return new_score - old_score
+        result = supabase.table('alerts').insert(alert_data).execute()
         
-        return 0
+        if result.data:
+            TouristService.update_safety_score(tourist_id, -20, f"Entered restricted zone: {zone_name}")
+        
+        return result.data[0] if result.data else None
     
     @staticmethod
-    def calculate_risk_assessment(tourist_id: int, db: Session) -> dict:
-        """Calculate comprehensive risk assessment for a tourist"""
-        tourist = db.query(Tourist).filter(Tourist.id == tourist_id).first()
-        if not tourist:
-            return {}
+    def get_all_alerts() -> List[Dict[str, Any]]:
+        result = supabase.table('alerts').select('*').order('timestamp', desc=True).execute()
+        return result.data or []
+    
+    @staticmethod
+    def resolve_alert(alert_id: int) -> bool:
+        result = supabase.table('alerts').update({
+            'status': 'resolved'
+        }).eq('id', alert_id).execute()
         
-        # Get recent alerts (last 24 hours)
-        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
-        recent_alerts = (
-            db.query(Alert)
-            .filter(
-                Alert.tourist_id == tourist_id,
-                Alert.timestamp >= twenty_four_hours_ago
-            )
-            .all()
-        )
+        return len(result.data) > 0
+
+class AdminService:
+    @staticmethod
+    def initialize_database() -> Dict[str, Any]:
+        restricted_zones = [
+            {
+                'name': 'Delhi Red Fort Restricted Area',
+                'coordinates': json.dumps([
+                    [28.6562, 77.2410], [28.6580, 77.2410], 
+                    [28.6580, 77.2440], [28.6562, 77.2440], [28.6562, 77.2410]
+                ]),
+                'created_at': datetime.utcnow().isoformat()
+            },
+            {
+                'name': 'Goa Beach Danger Zone',
+                'coordinates': json.dumps([
+                    [15.2993, 74.1240], [15.3010, 74.1240], 
+                    [15.3010, 74.1260], [15.2993, 74.1260], [15.2993, 74.1240]
+                ]),
+                'created_at': datetime.utcnow().isoformat()
+            },
+            {
+                'name': 'Shillong Restricted Military Zone',
+                'coordinates': json.dumps([
+                    [25.5788, 91.8933], [25.5800, 91.8933], 
+                    [25.5800, 91.8950], [25.5788, 91.8950], [25.5788, 91.8933]
+                ]),
+                'created_at': datetime.utcnow().isoformat()
+            }
+        ]
         
-        # Get latest location
-        latest_location = (
-            db.query(Location)
-            .filter(Location.tourist_id == tourist_id)
-            .order_by(Location.timestamp.desc())
-            .first()
-        )
-        
-        # Calculate risk level
-        risk_level = "low"
-        if tourist.safety_score < 30:
-            risk_level = "critical"
-        elif tourist.safety_score < 50:
-            risk_level = "high"
-        elif tourist.safety_score < 70:
-            risk_level = "medium"
-        
-        # Count alert types
-        panic_alerts = len([a for a in recent_alerts if a.type == AlertType.panic])
-        geofence_alerts = len([a for a in recent_alerts if a.type == AlertType.geofence])
+        supabase.table('restricted_zones').delete().neq('id', 0).execute()
+        result = supabase.table('restricted_zones').insert(restricted_zones).execute()
         
         return {
-            "tourist_id": tourist_id,
-            "tourist_name": tourist.name,
-            "safety_score": tourist.safety_score,
-            "risk_level": risk_level,
-            "recent_alerts_24h": len(recent_alerts),
-            "panic_alerts_24h": panic_alerts,
-            "geofence_alerts_24h": geofence_alerts,
-            "latest_location": {
-                "latitude": latest_location.latitude if latest_location else None,
-                "longitude": latest_location.longitude if latest_location else None,
-                "timestamp": latest_location.timestamp if latest_location else None
-            },
-            "recommendations": SafetyScoreService._get_recommendations(tourist.safety_score, recent_alerts)
+            'message': 'Database initialized with restricted zones',
+            'restricted_zones_created': len(result.data) if result.data else 0
         }
     
     @staticmethod
-    def _get_recommendations(safety_score: int, recent_alerts: list) -> list:
-        """Get safety recommendations based on score and recent activity"""
-        recommendations = []
+    def health_check() -> Dict[str, Any]:
+        try:
+            result = supabase.table('tourists').select('count').execute()
+            supabase_status = "connected"
+        except Exception as e:
+            supabase_status = f"error: {str(e)}"
         
-        if safety_score < 30:
-            recommendations.extend([
-                "Immediate assistance may be required",
-                "Contact emergency services if needed",
-                "Verify tourist's current status"
-            ])
-        elif safety_score < 50:
-            recommendations.extend([
-                "Monitor tourist closely",
-                "Consider reaching out to check status",
-                "Review recent travel patterns"
-            ])
-        elif safety_score < 70:
-            recommendations.extend([
-                "Encourage safe travel practices",
-                "Remind about restricted areas",
-                "Regular check-ins recommended"
-            ])
-        else:
-            recommendations.append("Tourist appears to be traveling safely")
-        
-        if len(recent_alerts) > 3:
-            recommendations.append("High alert frequency - investigate patterns")
-        
-        return recommendations
+        return {
+            'status': 'healthy' if supabase_status == 'connected' else 'unhealthy',
+            'timestamp': datetime.utcnow(),
+            'supabase': supabase_status
+        }

@@ -1,17 +1,15 @@
 """
 🚀 Smart Tourist Safety System - Production Server
-✅ SUPABASE DATABASE ONLY (No local PostgreSQL)
-🤖 AI Training every 1 minute with real-time data processing
+Clean, optimized version with real Supabase database integration
 """
 
 import logging
-import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import json
 import os
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -27,17 +25,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load Supabase environment variables (ONLY DATABASE CONNECTION)
+# Load environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     logger.error("Missing Supabase credentials in environment variables")
-    raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env file")
+    raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
 
-# Initialize Supabase client (DIRECT CONNECTION - No local PostgreSQL)
+# Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-logger.info(f"🔗 Connected to Supabase: {SUPABASE_URL}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -56,80 +53,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ============================================================================
-# AI TRAINING GLOBALS & BACKGROUND TASKS
-# ============================================================================
-
-# AI Training Status
-ai_training_status = {
-    "is_training": False,
-    "last_training": None,
-    "next_training": None,
-    "training_count": 0,
-    "models_trained": []
-}
-
-async def continuous_ai_training():
-    """Background task that retrains AI models every 1 minute"""
-    global ai_training_status
-    
-    logger.info("🤖 Starting continuous AI training (1-minute intervals)")
-    
-    while True:
-        try:
-            ai_training_status["is_training"] = True
-            ai_training_status["last_training"] = datetime.now()
-            ai_training_status["next_training"] = datetime.now() + timedelta(minutes=1)
-            
-            logger.info("🔄 Starting AI model training cycle...")
-            
-            # Fetch recent data from database
-            locations_response = supabase.table("locations").select("*").order("created_at", desc=True).limit(1000).execute()
-            tourists_response = supabase.table("tourists").select("*").execute()
-            alerts_response = supabase.table("alerts").select("*").order("timestamp", desc=True).limit(500).execute()
-            
-            locations_count = len(locations_response.data)
-            tourists_count = len(tourists_response.data)
-            alerts_count = len(alerts_response.data)
-            
-            # Simulate AI model training (in real implementation, this would train actual ML models)
-            models_trained = []
-            
-            if locations_count > 10:
-                # Simulate Isolation Forest training
-                await asyncio.sleep(0.5)  # Simulate training time
-                models_trained.append("isolation_forest")
-                
-                # Simulate Temporal Analysis training
-                await asyncio.sleep(0.3)  # Simulate training time
-                models_trained.append("temporal_analysis")
-            
-            if alerts_count > 5:
-                # Simulate Geofence Model training
-                await asyncio.sleep(0.2)  # Simulate training time
-                models_trained.append("geofence_classifier")
-            
-            ai_training_status["models_trained"] = models_trained
-            ai_training_status["training_count"] += 1
-            ai_training_status["is_training"] = False
-            
-            logger.info(f"✅ AI training complete! Trained {len(models_trained)} models: {models_trained}")
-            logger.info(f"📊 Data used: {locations_count} locations, {tourists_count} tourists, {alerts_count} alerts")
-            
-        except Exception as e:
-            logger.error(f"❌ AI training failed: {e}")
-            ai_training_status["is_training"] = False
-        
-        # Wait 1 minute before next training cycle
-        await asyncio.sleep(60)
-
-# Start background training when app starts
-@app.on_event("startup")
-async def startup_event():
-    """Initialize background AI training on app startup"""
-    logger.info("🚀 Starting Smart Tourist Safety API with AI Training...")
-    asyncio.create_task(continuous_ai_training())
 
 # ============================================================================
 # REQUEST/RESPONSE MODELS
@@ -354,70 +277,6 @@ async def health_check():
             "database": "error",
             "timestamp": datetime.now().isoformat()
         }
-
-# ============================================================================
-# AI TRAINING STATUS ENDPOINTS
-# ============================================================================
-
-@app.get("/ai/training/status")
-async def get_ai_training_status():
-    """Get current AI training status"""
-    global ai_training_status
-    
-    return {
-        "is_training": ai_training_status["is_training"],
-        "last_training": ai_training_status["last_training"].isoformat() if ai_training_status["last_training"] else None,
-        "next_training": ai_training_status["next_training"].isoformat() if ai_training_status["next_training"] else None,
-        "training_count": ai_training_status["training_count"],
-        "models_trained": ai_training_status["models_trained"],
-        "training_interval": "60 seconds",
-        "status": "active" if ai_training_status["training_count"] > 0 else "initializing"
-    }
-
-@app.get("/ai/data/stats")
-async def get_ai_data_stats():
-    """Get statistics about data available for AI training"""
-    try:
-        # Get data counts - use proper count method
-        locations_response = supabase.table("locations").select("*", count="exact").execute()
-        tourists_response = supabase.table("tourists").select("*", count="exact").execute()
-        alerts_response = supabase.table("alerts").select("*", count="exact").execute()
-        
-        # Get recent data
-        recent_locations = supabase.table("locations").select("*").gte("created_at", (datetime.now() - timedelta(hours=1)).isoformat()).execute()
-        recent_alerts = supabase.table("alerts").select("*").gte("timestamp", (datetime.now() - timedelta(hours=1)).isoformat()).execute()
-        
-        return {
-            "total_locations": locations_response.count if hasattr(locations_response, 'count') else len(locations_response.data),
-            "total_tourists": tourists_response.count if hasattr(tourists_response, 'count') else len(tourists_response.data),
-            "total_alerts": alerts_response.count if hasattr(alerts_response, 'count') else len(alerts_response.data),
-            "recent_locations_1h": len(recent_locations.data) if recent_locations.data else 0,
-            "recent_alerts_1h": len(recent_alerts.data) if recent_alerts.data else 0,
-            "data_freshness": "real-time",
-            "last_updated": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error fetching data stats: {e}")
-        return {"error": str(e)}
-
-@app.post("/ai/training/force")
-async def force_ai_training():
-    """Force immediate AI training cycle"""
-    global ai_training_status
-    
-    if ai_training_status["is_training"]:
-        return {"message": "Training already in progress", "status": "busy"}
-    
-    # This would trigger immediate training in a real implementation
-    return {
-        "message": "Manual training cycle initiated",
-        "status": "initiated",
-        "next_scheduled": ai_training_status["next_training"].isoformat() if ai_training_status["next_training"] else None
-    }
-
-# ============================================================================
-# TOURIST MANAGEMENT ENDPOINTS
-# ============================================================================
 
 @app.post("/registerTourist")
 async def register_tourist(tourist: TouristRegistration):

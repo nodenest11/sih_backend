@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import AIAssessment, AIModelPrediction, Tourist, Location, Alert, AlertSeverity, AISeverity
+from app.models import AIAssessment, AIModelPrediction, Tourist, Location
 from app.services.ai_engine import AIEngineService
 from app.services.safety import SafetyService
 import logging

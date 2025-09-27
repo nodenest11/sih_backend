@@ -559,8 +559,6 @@ class AIEngineService:
             # Get cutoff time
             cutoff_time = datetime.utcnow() - timedelta(days=days_back)
             
-            logger.info(f"📈 Fetching {model_type} training data from {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')} onwards...")
-            
             if model_type == "isolation_forest":
                 # Fetch location and tourist data for anomaly detection
                 query = self.db_session.query(
@@ -598,33 +596,23 @@ class AIEngineService:
                 ).order_by(Location.tourist_id, Location.timestamp)
                 
             else:
-                logger.error(f"❌ Unknown model type: {model_type}")
                 return pd.DataFrame()
             
             # Execute query and create DataFrame
-            start_time = datetime.utcnow()
             results = query.all()
-            query_time = (datetime.utcnow() - start_time).total_seconds()
-            
             if not results:
-                logger.warning(f"⚠️ No data found for {model_type} training (last {days_back} days)")
+                logger.warning(f"No data found for {model_type} training")
                 return pd.DataFrame()
             
             # Convert to DataFrame
             columns = [column['name'] for column in query.statement.columns]
             df = pd.DataFrame(results, columns=columns)
             
-            # Data quality metrics
-            unique_tourists = df['tourist_id'].nunique() if 'tourist_id' in df.columns else 0
-            date_range = (df['timestamp'].max() - df['timestamp'].min()).total_seconds() / 3600 if 'timestamp' in df.columns else 0
-            
-            logger.info(f"✅ Fetched {len(df)} records for {model_type} in {query_time:.2f}s")
-            logger.info(f"📉 Data quality: {unique_tourists} tourists, {date_range:.1f} hours span")
-            
+            logger.info(f"Fetched {len(df)} records for {model_type} training")
             return df
             
         except Exception as e:
-            logger.error(f"❌ Error fetching training data for {model_type}: {e}")
+            logger.error(f"Error fetching training data for {model_type}: {e}")
             return pd.DataFrame()
 
     def engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1223,37 +1211,9 @@ class AIEngineService:
 
     def get_model_status(self) -> Dict[str, Any]:
         """Get current model status and performance metrics."""
-        current_time = datetime.utcnow()
-        
-        # Calculate training status for each model
-        training_status = {}
-        for model_type in ['isolation_forest', 'temporal_autoencoder']:
-            last_training = self.last_training_time.get(model_type, datetime.min)
-            seconds_since_training = (current_time - last_training).total_seconds()
-            
-            training_status[model_type] = {
-                "last_trained": last_training.isoformat() if last_training != datetime.min else "never",
-                "seconds_ago": int(seconds_since_training),
-                "next_training_in": max(0, int(self.retrain_interval - seconds_since_training)),
-                "is_trained": model_type in self.models and self.models[model_type] is not None,
-                "training_due": seconds_since_training > self.retrain_interval
-            }
-        
         return {
-            "timestamp": current_time.isoformat(),
-            "models_loaded": list(self.models.keys()),
-            "model_versions": self.model_versions,
-            "performance_metrics": self.performance_metrics,
-            "training_status": training_status,
-            "configuration": {
-                "retrain_interval_seconds": self.retrain_interval,
-                "min_data_points": self.min_data_points,
-                "feature_columns": len(self.feature_columns),
-                "safety_thresholds": self.safety_thresholds
-            },
-            "activity": {
-                "processing_frequency": "Every 15 seconds",
-                "training_frequency": "Every 60 seconds",
-                "data_sources": ["locations", "tourists", "alerts"]
-            }
+            'models_loaded': list(self.models.keys()),
+            'model_versions': self.model_versions,
+            'performance_metrics': self.performance_metrics,
+            'last_training_times': self.last_training_time
         }

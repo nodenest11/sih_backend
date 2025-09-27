@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
 from app.database import get_db
-from app.models import AIAssessment, AIModelPrediction, Tourist, Location, Alert, AlertSeverity, AISeverity
+from app.models import AIAssessment, AIModelPrediction, Tourist, Location
 from app.services.ai_engine import AIEngineService
 from app.services.safety import SafetyService
 import logging
@@ -317,104 +317,6 @@ async def get_training_status():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get training status"
-        )
-
-
-@router.get("/data/stats")
-async def get_data_statistics(
-    db: Session = Depends(get_db)
-):
-    """Get real-time data statistics for AI training."""
-    try:
-        current_time = datetime.utcnow()
-        
-        # Get data counts for different time periods
-        stats = {
-            "timestamp": current_time.isoformat(),
-            "database_stats": {}
-        }
-        
-        # Location data statistics
-        location_stats = {}
-        for period_name, hours in [("last_hour", 1), ("last_day", 24), ("last_week", 168)]:
-            cutoff_time = current_time - timedelta(hours=hours)
-            
-            location_count = db.query(Location).filter(
-                Location.timestamp >= cutoff_time
-            ).count()
-            
-            unique_tourists = db.query(Location.tourist_id).filter(
-                Location.timestamp >= cutoff_time
-            ).distinct().count()
-            
-            location_stats[period_name] = {
-                "location_updates": location_count,
-                "unique_tourists": unique_tourists,
-                "avg_updates_per_tourist": round(location_count / max(unique_tourists, 1), 1)
-            }
-        
-        stats["database_stats"]["locations"] = location_stats
-        
-        # Alert statistics
-        alert_stats = {}
-        for period_name, hours in [("last_hour", 1), ("last_day", 24), ("last_week", 168)]:
-            cutoff_time = current_time - timedelta(hours=hours)
-            
-            total_alerts = db.query(Alert).filter(
-                Alert.timestamp >= cutoff_time
-            ).count()
-            
-            critical_alerts = db.query(Alert).filter(
-                Alert.timestamp >= cutoff_time,
-                Alert.severity == AlertSeverity.CRITICAL
-            ).count()
-            
-            alert_stats[period_name] = {
-                "total_alerts": total_alerts,
-                "critical_alerts": critical_alerts
-            }
-        
-        stats["database_stats"]["alerts"] = alert_stats
-        
-        # AI Assessment statistics
-        assessment_stats = {}
-        for period_name, hours in [("last_hour", 1), ("last_day", 24), ("last_week", 168)]:
-            cutoff_time = current_time - timedelta(hours=hours)
-            
-            total_assessments = db.query(AIAssessment).filter(
-                AIAssessment.created_at >= cutoff_time
-            ).count()
-            
-            critical_assessments = db.query(AIAssessment).filter(
-                AIAssessment.created_at >= cutoff_time,
-                AIAssessment.severity == AISeverity.CRITICAL
-            ).count()
-            
-            assessment_stats[period_name] = {
-                "total_assessments": total_assessments,
-                "critical_assessments": critical_assessments
-            }
-        
-        stats["database_stats"]["ai_assessments"] = assessment_stats
-        
-        # Active tourists
-        active_tourists = db.query(Tourist).filter(
-            Tourist.is_active == True
-        ).count()
-        
-        stats["summary"] = {
-            "active_tourists": active_tourists,
-            "data_freshness": "Real-time",
-            "training_data_availability": "Sufficient" if location_stats["last_day"]["location_updates"] > 50 else "Limited"
-        }
-        
-        return stats
-        
-    except Exception as e:
-        logger.error(f"Error getting data statistics: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get data statistics"
         )
 
 

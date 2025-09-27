@@ -1,7 +1,6 @@
 """
 🚀 Smart Tourist Safety System - Production Server
-✅ SUPABASE DATABASE ONLY (No local PostgreSQL)
-🤖 AI Training every 1 minute with real-time data processing
+Clean, optimized version with real Supabase database integration + AI Training
 """
 
 import logging
@@ -27,17 +26,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load Supabase environment variables (ONLY DATABASE CONNECTION)
+# Load environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     logger.error("Missing Supabase credentials in environment variables")
-    raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env file")
+    raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
 
-# Initialize Supabase client (DIRECT CONNECTION - No local PostgreSQL)
+# Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-logger.info(f"🔗 Connected to Supabase: {SUPABASE_URL}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -87,7 +85,7 @@ async def continuous_ai_training():
             # Fetch recent data from database
             locations_response = supabase.table("locations").select("*").order("created_at", desc=True).limit(1000).execute()
             tourists_response = supabase.table("tourists").select("*").execute()
-            alerts_response = supabase.table("alerts").select("*").order("timestamp", desc=True).limit(500).execute()
+            alerts_response = supabase.table("alerts").select("*").order("created_at", desc=True).limit(500).execute()
             
             locations_count = len(locations_response.data)
             tourists_count = len(tourists_response.data)
@@ -354,70 +352,6 @@ async def health_check():
             "database": "error",
             "timestamp": datetime.now().isoformat()
         }
-
-# ============================================================================
-# AI TRAINING STATUS ENDPOINTS
-# ============================================================================
-
-@app.get("/ai/training/status")
-async def get_ai_training_status():
-    """Get current AI training status"""
-    global ai_training_status
-    
-    return {
-        "is_training": ai_training_status["is_training"],
-        "last_training": ai_training_status["last_training"].isoformat() if ai_training_status["last_training"] else None,
-        "next_training": ai_training_status["next_training"].isoformat() if ai_training_status["next_training"] else None,
-        "training_count": ai_training_status["training_count"],
-        "models_trained": ai_training_status["models_trained"],
-        "training_interval": "60 seconds",
-        "status": "active" if ai_training_status["training_count"] > 0 else "initializing"
-    }
-
-@app.get("/ai/data/stats")
-async def get_ai_data_stats():
-    """Get statistics about data available for AI training"""
-    try:
-        # Get data counts - use proper count method
-        locations_response = supabase.table("locations").select("*", count="exact").execute()
-        tourists_response = supabase.table("tourists").select("*", count="exact").execute()
-        alerts_response = supabase.table("alerts").select("*", count="exact").execute()
-        
-        # Get recent data
-        recent_locations = supabase.table("locations").select("*").gte("created_at", (datetime.now() - timedelta(hours=1)).isoformat()).execute()
-        recent_alerts = supabase.table("alerts").select("*").gte("timestamp", (datetime.now() - timedelta(hours=1)).isoformat()).execute()
-        
-        return {
-            "total_locations": locations_response.count if hasattr(locations_response, 'count') else len(locations_response.data),
-            "total_tourists": tourists_response.count if hasattr(tourists_response, 'count') else len(tourists_response.data),
-            "total_alerts": alerts_response.count if hasattr(alerts_response, 'count') else len(alerts_response.data),
-            "recent_locations_1h": len(recent_locations.data) if recent_locations.data else 0,
-            "recent_alerts_1h": len(recent_alerts.data) if recent_alerts.data else 0,
-            "data_freshness": "real-time",
-            "last_updated": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Error fetching data stats: {e}")
-        return {"error": str(e)}
-
-@app.post("/ai/training/force")
-async def force_ai_training():
-    """Force immediate AI training cycle"""
-    global ai_training_status
-    
-    if ai_training_status["is_training"]:
-        return {"message": "Training already in progress", "status": "busy"}
-    
-    # This would trigger immediate training in a real implementation
-    return {
-        "message": "Manual training cycle initiated",
-        "status": "initiated",
-        "next_scheduled": ai_training_status["next_training"].isoformat() if ai_training_status["next_training"] else None
-    }
-
-# ============================================================================
-# TOURIST MANAGEMENT ENDPOINTS
-# ============================================================================
 
 @app.post("/registerTourist")
 async def register_tourist(tourist: TouristRegistration):

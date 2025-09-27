@@ -378,19 +378,19 @@ async def get_ai_training_status():
 async def get_ai_data_stats():
     """Get statistics about data available for AI training"""
     try:
-        # Get data counts - use proper count method
-        locations_response = supabase.table("locations").select("*", count="exact").execute()
-        tourists_response = supabase.table("tourists").select("*", count="exact").execute()
-        alerts_response = supabase.table("alerts").select("*", count="exact").execute()
+        # Get data counts
+        locations_response = supabase.table("locations").select("count").execute()
+        tourists_response = supabase.table("tourists").select("count").execute()
+        alerts_response = supabase.table("alerts").select("count").execute()
         
         # Get recent data
         recent_locations = supabase.table("locations").select("*").gte("created_at", (datetime.now() - timedelta(hours=1)).isoformat()).execute()
         recent_alerts = supabase.table("alerts").select("*").gte("timestamp", (datetime.now() - timedelta(hours=1)).isoformat()).execute()
         
         return {
-            "total_locations": locations_response.count if hasattr(locations_response, 'count') else len(locations_response.data),
-            "total_tourists": tourists_response.count if hasattr(tourists_response, 'count') else len(tourists_response.data),
-            "total_alerts": alerts_response.count if hasattr(alerts_response, 'count') else len(alerts_response.data),
+            "total_locations": len(locations_response.data) if locations_response.data else 0,
+            "total_tourists": len(tourists_response.data) if tourists_response.data else 0,
+            "total_alerts": len(alerts_response.data) if alerts_response.data else 0,
             "recent_locations_1h": len(recent_locations.data) if recent_locations.data else 0,
             "recent_alerts_1h": len(recent_alerts.data) if recent_alerts.data else 0,
             "data_freshness": "real-time",

@@ -45,3 +45,15 @@ htmlcov/
 # Logs
 *.log
 logs/
+app.log
+
+# History and backup files
+.history/
+*_backup.py
+main_backup.py
+
+# Temporary and cache files
+*.tmp
+*.temp
+.pytest_cache/
+.coverage

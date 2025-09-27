@@ -54,9 +54,10 @@ async def send_location_endpoint(
         
         # 🤖 Trigger AI Assessment in background
         try:
-            from app.services.ai_engine import ai_engine_service
+            from app.api.ai_assessment import get_ai_engine
+            engine = get_ai_engine()
             background_tasks.add_task(
-                ai_engine_service.assess_tourist_safety,
+                engine.assess_tourist_safety,
                 tourist_id=location_data.tourist_id,
                 location_id=db_location.id
             )
@@ -91,6 +92,8 @@ async def update_location(
 
 @router.get("/all", response_model=List[LocationSummary])
 async def get_all_locations(
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(get_db)
 ):
     """
@@ -115,7 +118,7 @@ async def get_all_locations(
             (Location.timestamp == subquery.c.max_timestamp)
         ).filter(
             Tourist.is_active == True
-        ).all()
+        ).offset(max(0, skip)).limit(min(max(1, limit), 1000)).all()
         
         # Format response
         result = []

@@ -42,10 +42,36 @@ logger.info(f"🔗 Connected to Supabase: {SUPABASE_URL}")
 # Initialize FastAPI app
 app = FastAPI(
     title="Smart Tourist Safety System",
-    description="Real-time tourist safety monitoring with AI-powered risk assessment",
+    description="""🚀 **Real-time Tourist Safety Monitoring & Incident Response System**
+    
+    This API provides comprehensive tourist safety features including:
+    - 👤 **Tourist Registration & Management**
+    - 📍 **Real-time GPS Location Tracking**  
+    - 🚨 **Emergency SOS & Panic Alerts**
+    - 🤖 **AI-powered Risk Assessment**
+    - 🚔 **Automated E-FIR Filing System**
+    - 📊 **Safety Score Monitoring**
+    
+    **Database:** Supabase Cloud PostgreSQL  
+    **AI Engine:** Hybrid ML models with 60-second training cycles  
+    **Emergency Response:** Instant alerts to authorities
+    """,
     version="3.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    contact={
+        "name": "Smart India Hackathon 2025",
+        "url": "https://github.com/nodenest11/sih_backend",
+    },
+    license_info={
+        "name": "MIT",
+    },
+    servers=[
+        {
+            "url": "http://localhost:8000",
+            "description": "Development server"
+        }
+    ]
 )
 
 # CORS middleware
@@ -330,9 +356,28 @@ def assess_safety(location_data: Dict[str, Any], tourist_data: Dict[str, Any]) -
 # API ENDPOINTS
 # ============================================================================
 
-@app.get("/")
+@app.get("/", 
+         summary="🏠 System Health & Status",
+         description="**Primary health check endpoint** that provides system status, database connectivity, and API version information.",
+         tags=["System"],
+         responses={
+             200: {
+                 "description": "System is healthy and operational",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "status": "healthy",
+                             "message": "Smart Tourist Safety System is operational",
+                             "version": "3.0.0",
+                             "database": "connected",
+                             "timestamp": "2025-09-27T13:20:00Z"
+                         }
+                     }
+                 }
+             }
+         })
 async def health_check():
-    """Health check endpoint"""
+    """System health check with database connectivity status"""
     try:
         # Test database connection
         test_query = supabase.table("tourists").select("count").limit(1).execute()
@@ -359,9 +404,30 @@ async def health_check():
 # AI TRAINING STATUS ENDPOINTS
 # ============================================================================
 
-@app.get("/ai/training/status")
+@app.get("/ai/training/status",
+         summary="🤖 AI Training Status",
+         description="**Real-time AI training status** showing current model training state, schedules, and performance metrics.",
+         tags=["AI & Machine Learning"],
+         responses={
+             200: {
+                 "description": "Current AI training status and metrics",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "is_training": False,
+                             "last_training": "2025-09-27T13:15:00Z",
+                             "next_training": "2025-09-27T13:16:00Z",
+                             "training_count": 42,
+                             "models_trained": ["isolation_forest", "lstm_autoencoder"],
+                             "training_interval": "60 seconds",
+                             "status": "active"
+                         }
+                     }
+                 }
+             }
+         })
 async def get_ai_training_status():
-    """Get current AI training status"""
+    """Get real-time AI model training status and schedules"""
     global ai_training_status
     
     return {
@@ -419,9 +485,26 @@ async def force_ai_training():
 # TOURIST MANAGEMENT ENDPOINTS
 # ============================================================================
 
-@app.post("/registerTourist")
+@app.post("/registerTourist",
+          summary="👤 Register New Tourist", 
+          description="**Register a new tourist** in the safety monitoring system. This creates a tourist profile with initial safety score of 100 and enables real-time tracking.",
+          tags=["Tourist Management"],
+          responses={
+              201: {
+                  "description": "Tourist successfully registered",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "id": 1,
+                              "message": "Tourist registered successfully",
+                              "safety_score": 100
+                          }
+                      }
+                  }
+              }
+          })
 async def register_tourist(tourist: TouristRegistration):
-    """Register a new tourist"""
+    """Register a new tourist with safety monitoring enabled"""
     try:
         tourist_data = {
             "name": tourist.name,
@@ -457,9 +540,27 @@ async def register_tourist(tourist: TouristRegistration):
         logger.error(f"Tourist registration error: {e}")
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
-@app.post("/sendLocation")
+@app.post("/sendLocation",
+          summary="📍 Update Tourist Location",
+          description="**Real-time GPS location tracking** with automatic AI safety assessment. Updates tourist location and triggers risk analysis using ML models.",
+          tags=["Location Tracking"],
+          responses={
+              200: {
+                  "description": "Location updated successfully with AI assessment",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "location_id": 123,
+                              "message": "Location updated successfully",
+                              "safety_score": 85,
+                              "assessment": "SAFE"
+                          }
+                      }
+                  }
+              }
+          })
 async def send_location(location: LocationUpdate):
-    """Update tourist location with AI assessment"""
+    """Update tourist location with AI-powered safety assessment"""
     try:
         # Get tourist data
         tourist_response = supabase.table("tourists").select("*").eq("id", location.tourist_id).execute()
@@ -559,9 +660,27 @@ async def send_location(location: LocationUpdate):
         logger.error(f"Location update error: {e}")
         raise HTTPException(status_code=500, detail=f"Location update failed: {str(e)}")
 
-@app.post("/pressSOS")
+@app.post("/pressSOS",
+          summary="🚨 Emergency SOS Alert",
+          description="**Critical emergency endpoint** for panic button functionality. Instantly creates high-priority alerts and notifies authorities with GPS location.",
+          tags=["Emergency Response"],
+          responses={
+              201: {
+                  "description": "Emergency SOS alert created and dispatched",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "alert_id": 456,
+                              "message": "SOS alert created successfully",
+                              "severity": "CRITICAL",
+                              "status": "active"
+                          }
+                      }
+                  }
+              }
+          })
 async def press_sos(sos: SOSAlert):
-    """Handle SOS emergency button press"""
+    """Handle emergency SOS button press - creates critical priority alerts"""
     try:
         # Get tourist data
         tourist_response = supabase.table("tourists").select("*").eq("id", sos.tourist_id).execute()
@@ -624,9 +743,27 @@ async def press_sos(sos: SOSAlert):
         logger.error(f"SOS error: {e}")
         raise HTTPException(status_code=500, detail=f"SOS activation failed: {str(e)}")
 
-@app.post("/fileEFIR")
+@app.post("/fileEFIR",
+          summary="🚔 File Electronic FIR",
+          description="**Automated E-FIR filing system** for tourist incidents. Creates official police reports with incident details and location data.",
+          tags=["Legal & Compliance"],
+          responses={
+              201: {
+                  "description": "E-FIR successfully filed with authorities",
+                  "content": {
+                      "application/json": {
+                          "example": {
+                              "efir_id": "EFIR-2025-09-27-000123",
+                              "status": "FILED",
+                              "fir_number": "EFIR-2025-09-27-000123",
+                              "filed_at": "2025-09-27T13:00:00Z"
+                          }
+                      }
+                  }
+              }
+          })
 async def file_efir(efir: EFIRData):
-    """File Electronic First Information Report"""
+    """File Electronic First Information Report with authorities"""
     try:
         # Get tourist data
         tourist_response = supabase.table("tourists").select("*").eq("id", efir.tourist_id).execute()
@@ -686,14 +823,39 @@ async def file_efir(efir: EFIRData):
         logger.error(f"E-FIR error: {e}")
         raise HTTPException(status_code=500, detail=f"E-FIR filing failed: {str(e)}")
 
-@app.get("/getAlerts")
+@app.get("/getAlerts",
+         summary="📊 Retrieve Safety Alerts",
+         description="**Get filtered list of safety alerts** with support for tourist ID, status, severity, and pagination filters.",
+         tags=["Alert Management"],
+         responses={
+             200: {
+                 "description": "List of alerts matching filter criteria",
+                 "content": {
+                     "application/json": {
+                         "example": {
+                             "alerts": [
+                                 {
+                                     "id": 456,
+                                     "tourist_id": 1,
+                                     "type": "sos",
+                                     "severity": "CRITICAL",
+                                     "status": "active",
+                                     "timestamp": "2025-09-27T13:00:00Z"
+                                 }
+                             ],
+                             "total": 1
+                         }
+                     }
+                 }
+             }
+         })
 async def get_alerts(
-    tourist_id: Optional[int] = Query(None),
-    status: Optional[str] = Query(None),
-    severity: Optional[str] = Query(None),
-    limit: int = Query(50)
+    tourist_id: Optional[int] = Query(None, description="Filter by specific tourist ID"),
+    status: Optional[str] = Query(None, description="Filter by alert status (active, resolved, etc.)"),
+    severity: Optional[str] = Query(None, description="Filter by severity level (LOW, MEDIUM, HIGH, CRITICAL)"),
+    limit: int = Query(50, description="Maximum number of alerts to return")
 ):
-    """Get alerts with optional filtering"""
+    """Get filtered alerts with pagination support"""
     try:
         query = supabase.table("alerts").select("*")
         

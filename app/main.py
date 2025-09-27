@@ -7,7 +7,7 @@ import time
 
 from app.config import settings
 from app.database import create_tables, check_db_connection
-from app.api import tourists, locations, alerts, ai_assessment, efir
+from app.api import tourists, locations, alerts, ai_assessment, efir, frontend, realtime
 from app.services.seed_data import seed_database
 
 # Configure logging
@@ -103,6 +103,8 @@ app.include_router(locations.router, prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")
 app.include_router(ai_assessment.router, prefix="/api/v1")
 app.include_router(efir.router, prefix="/api/v1")
+app.include_router(frontend.router, prefix="/api/v1")
+app.include_router(realtime.router, prefix="/api/v1")
 
 # ✅ Include required endpoints without prefix for backward compatibility
 app.include_router(tourists.router)  # Provides /registerTourist

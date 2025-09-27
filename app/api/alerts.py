@@ -58,12 +58,6 @@ async def press_sos_endpoint(
         db.refresh(alert)
         
         logger.critical(f"🆘 SOS ALERT created for tourist {panic_data.tourist_id}: {panic_data.message}")
-        
-        # TODO: Trigger immediate notifications to:
-        # - Police dashboard
-        # - Family emergency contacts  
-        # - Tourist app
-        
         return alert
         
     except HTTPException:
@@ -74,26 +68,6 @@ async def press_sos_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create SOS alert"
-        )
-        
-        db.commit()
-        db.refresh(alert)
-        
-        logger.warning(f"PANIC ALERT created for tourist {panic_data.tourist_id} at {panic_data.latitude}, {panic_data.longitude}")
-        
-        # TODO: Trigger immediate emergency response
-        # This is where we would notify emergency services, family, etc.
-        
-        return alert
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating panic alert: {e}")
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create panic alert"
         )
 
 

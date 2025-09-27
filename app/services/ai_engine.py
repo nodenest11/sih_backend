@@ -52,8 +52,8 @@ class AIEngineService:
         self.performance_metrics: Dict[str, Dict] = {}
         
         # 🎯 Hybrid AI Configuration
-        self.retrain_interval = 60    # Retrain every 1 minute  
-        self.min_data_points = 10     # Minimum for training (reduced for faster iteration)
+        self.retrain_interval = 300   # Retrain every 5 minutes (more reasonable)
+        self.min_data_points = 25     # Minimum for training (increased for better models)
         self.last_training_time = {}
         
         # 📊 Feature engineering configuration 
@@ -70,8 +70,8 @@ class AIEngineService:
         
         # 🚨 Safety Score Thresholds
         self.safety_thresholds = {
-            'safe': 80,       # > 80 = Safe
-            'warning': 50,    # 50-80 = Warning  
+            'safe': 80,       # >= 80 = Safe
+            'warning': 50,    # 50-79 = Warning  
             'critical': 50    # < 50 = Critical
         }
         
@@ -87,8 +87,11 @@ class AIEngineService:
         try:
             logger.info("🤖 Initializing Hybrid AI Engine...")
             
-            # Initialize database connection
+            # Initialize database connection with optimizations
             self.db_session = SessionLocal()
+            # Enable connection pooling optimizations
+            self.db_session.execute("SET statement_timeout = '30s'")  # Prevent long-running queries
+            self.db_session.execute("SET idle_in_transaction_session_timeout = '60s'")
             
             # Load existing models if available
             await self.load_models()
@@ -106,7 +109,7 @@ class AIEngineService:
             
             logger.info("✅ Hybrid AI Engine initialized successfully")
             logger.info("🎯 Active models: Geofencing + Isolation Forest + Temporal Analysis")
-            logger.info("⚡ Training frequency: Every 1 minute")
+            logger.info("⚡ Training frequency: Every 5 minutes")
             logger.info("📡 Assessment frequency: Every 15 seconds")
             
         except Exception as e:
@@ -152,7 +155,7 @@ class AIEngineService:
         while True:
             try:
                 await self.check_and_retrain_models()
-                await asyncio.sleep(60)   # Check every 1 minute
+                await asyncio.sleep(300)  # Check every 5 minutes
             except Exception as e:
                 logger.error(f"Error in continuous training loop: {e}")
                 await asyncio.sleep(30)  # Wait 30 seconds before retry
@@ -192,12 +195,18 @@ class AIEngineService:
             start_time = datetime.utcnow()
             logger.info(f"🤖 Starting AI assessment for tourist {tourist_id}")
             
+            # Input validation
+            if not isinstance(tourist_id, int) or tourist_id <= 0:
+                raise ValueError(f"Invalid tourist_id: {tourist_id}")
+            if not isinstance(location_id, int) or location_id <= 0:
+                raise ValueError(f"Invalid location_id: {location_id}")
+            
             # Get tourist and location data
             tourist = self.db_session.query(Tourist).filter(Tourist.id == tourist_id).first()
             location = self.db_session.query(Location).filter(Location.id == location_id).first()
             
             if not tourist or not location:
-                raise ValueError("Tourist or location not found")
+                raise ValueError(f"Tourist (id={tourist_id}) or location (id={location_id}) not found")
             
             # Initialize assessment results
             assessment_results = {
@@ -339,9 +348,24 @@ class AIEngineService:
             return assessment_results
             
         except Exception as e:
-            logger.error(f"❌ Error in AI assessment for tourist {tourist_id}: {e}")
-            self.db_session.rollback()
-            raise
+            logger.error(f"❌ Error in AI assessment for tourist {tourist_id}: {e}", exc_info=True)
+            if self.db_session:
+                self.db_session.rollback()
+            
+            # Return safe fallback assessment instead of raising
+            return {
+                'tourist_id': tourist_id,
+                'location_id': location_id if 'location_id' in locals() else 0,
+                'timestamp': datetime.utcnow(),
+                'models_used': ['fallback'],
+                'predictions': {'error': str(e)},
+                'safety_score': 50,  # Neutral score on error
+                'severity': 'WARNING',
+                'confidence': 0.0,
+                'alerts_triggered': [],
+                'recommendations': ['System error occurred - manual review recommended'],
+                'error': True
+            }
 
     # ========================================================================
     # 🛠️ HELPER METHODS FOR HYBRID PIPELINE
@@ -386,36 +410,47 @@ class AIEngineService:
                 'confidence': 0.0
             }
             
-            if 'isolation_forest' not in self.models:
+            if 'isolation_forest' not in self.models or 'isolation_forest' not in self.scalers:
                 return result
             
-            # Get recent location history for feature engineering
+            # Get recent location history for feature engineering (optimized query)
             recent_locations = self.db_session.query(Location).filter(
                 and_(
                     Location.tourist_id == tourist_id,
                     Location.timestamp >= datetime.utcnow() - timedelta(hours=24)
                 )
-            ).order_by(Location.timestamp).all()
+            ).order_by(Location.timestamp.desc()).limit(50).all()  # Limit to last 50 for performance
             
             if len(recent_locations) < 3:
                 return result  # Not enough data
             
             # Engineer features
-            features = self._engineer_location_features(recent_locations, location)
+            features = await self._engineer_location_features(recent_locations, location)
+            if not features or len(features) != len(self.feature_columns):
+                logger.warning(f"Feature engineering failed for tourist {tourist_id}")
+                return result
+            
+            # Scale features using the stored scaler
+            features_array = np.array(features).reshape(1, -1)
+            features_scaled = self.scalers['isolation_forest'].transform(features_array)
             
             # Make prediction
-            if hasattr(self.models['isolation_forest'], 'predict'):
-                prediction = self.models['isolation_forest'].predict([features])
-                anomaly_score = self.models['isolation_forest'].score_samples([features])[0]
+            model = self.models['isolation_forest']
+            if hasattr(model, 'predict') and hasattr(model, 'score_samples'):
+                prediction = model.predict(features_scaled)
+                anomaly_score = model.score_samples(features_scaled)[0]
                 
                 result['is_anomaly'] = prediction[0] == -1
-                result['anomaly_score'] = max(0, min(1, -anomaly_score))  # Normalize to 0-1
-                result['confidence'] = 0.8  # Fixed confidence for now
+                # Normalize anomaly score: Isolation Forest scores are typically between -0.5 and 0.5
+                # Convert to 0-1 scale where 1 = more anomalous
+                normalized_score = max(0, min(1, (0.5 - anomaly_score) / 1.0))
+                result['anomaly_score'] = normalized_score
+                result['confidence'] = 0.85  # High confidence in ML prediction
             
             return result
             
         except Exception as e:
-            logger.error(f"Error in anomaly detection: {e}")
+            logger.error(f"Error in anomaly detection for tourist {tourist_id}: {e}")
             return {'is_anomaly': False, 'anomaly_score': 0.0, 'confidence': 0.0}
 
     async def _assess_temporal_patterns(self, tourist_id: int, location: Location) -> Dict[str, Any]:
@@ -427,13 +462,13 @@ class AIEngineService:
                 'confidence': 0.0
             }
             
-            # Get location history for temporal analysis
+            # Get location history for temporal analysis (optimized query)
             location_history = self.db_session.query(Location).filter(
                 and_(
                     Location.tourist_id == tourist_id,
                     Location.timestamp >= datetime.utcnow() - timedelta(hours=6)
                 )
-            ).order_by(Location.timestamp).all()
+            ).order_by(Location.timestamp.desc()).limit(30).all()  # Limit to last 30 for performance
             
             if len(location_history) < 5:
                 return result  # Not enough temporal data
@@ -459,28 +494,41 @@ class AIEngineService:
                 time_intervals.append(max(time_diff, 0.01))  # Avoid division by zero
             
             # Calculate movement statistics
-            avg_speed = np.mean([d/t for d, t in zip(distances, time_intervals)])
-            speed_variance = np.var([d/t for d, t in zip(distances, time_intervals)])
+            speeds = [d/t for d, t in zip(distances, time_intervals)]
+            avg_speed = np.mean(speeds) if speeds else 0.0
+            speed_variance = np.var(speeds) if len(speeds) > 1 else 0.0
             
             # Calculate risk score based on temporal patterns
             risk_factors = []
             
-            # Long inactivity risk
-            if avg_speed < 0.5:  # Very slow movement
-                risk_factors.append(0.3)
+            # Long inactivity risk (very slow movement consistently)
+            if avg_speed < 0.5:  # Less than 0.5 km/h = essentially stationary
+                inactivity_severity = min(1.0, (0.5 - avg_speed) / 0.5)  # Normalize
+                risk_factors.append(0.4 * inactivity_severity)
             
-            # Erratic movement risk
-            if speed_variance > 10:  # High speed variance
-                risk_factors.append(0.2)
+            # Erratic movement risk (high speed variance)
+            if speed_variance > 5:  # Lowered threshold for better sensitivity
+                erratic_severity = min(1.0, speed_variance / 20)  # Normalize to 0-1
+                risk_factors.append(0.3 * erratic_severity)
             
             # Time of day risk (higher risk at night)
             current_hour = location.timestamp.hour
             if current_hour < 6 or current_hour > 22:
-                risk_factors.append(0.2)
+                # More risk in deep night hours (midnight to 4 AM)
+                night_risk = 0.3 if 0 <= current_hour <= 4 else 0.2
+                risk_factors.append(night_risk)
+            
+            # Sudden speed changes (additional risk factor)
+            if len(speeds) > 1:
+                speed_changes = [abs(speeds[i] - speeds[i-1]) for i in range(1, len(speeds))]
+                max_speed_change = max(speed_changes) if speed_changes else 0
+                if max_speed_change > 10:  # Sudden speed change > 10 km/h
+                    change_severity = min(1.0, max_speed_change / 50)  # Normalize
+                    risk_factors.append(0.2 * change_severity)
             
             result['risk_score'] = min(1.0, sum(risk_factors))
-            result['pattern_deviation'] = min(1.0, speed_variance / 10)
-            result['confidence'] = 0.7  # Moderate confidence for temporal analysis
+            result['pattern_deviation'] = min(1.0, speed_variance / 15)  # Better normalization
+            result['confidence'] = 0.75 if len(speeds) >= 3 else 0.5  # Confidence based on data quality
             
             return result
             
@@ -494,22 +542,130 @@ class AIEngineService:
             if not polygon_coords or 'coordinates' not in polygon_coords:
                 return False
             
-            # Simple bounding box check for now
-            # In production, use proper polygon containment algorithms
             coords = polygon_coords['coordinates'][0]  # Assume first ring
+            if not coords or len(coords) < 3:
+                return False
             
-            lats = [coord[1] for coord in coords]
-            lons = [coord[0] for coord in coords]
+            # Ray casting algorithm for point-in-polygon test
+            x, y = lon, lat
+            n = len(coords)
+            inside = False
             
-            min_lat, max_lat = min(lats), max(lats)
-            min_lon, max_lon = min(lons), max(lons)
+            p1x, p1y = coords[0][0], coords[0][1]
+            for i in range(1, n + 1):
+                p2x, p2y = coords[i % n][0], coords[i % n][1]
+                if y > min(p1y, p2y):
+                    if y <= max(p1y, p2y):
+                        if x <= max(p1x, p2x):
+                            if p1y != p2y:
+                                xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                            if p1x == p2x or x <= xinters:
+                                inside = not inside
+                p1x, p1y = p2x, p2y
             
-            return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+            return inside
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error in point-in-polygon calculation: {e}")
             return False
 
-    def _engineer_location_features(self, location_history: List[Location], current_location: Location) -> List[float]:
+    async def _calculate_zone_risk_score(self, location: Location) -> float:
+        """Calculate zone risk score based on location's proximity to restricted/safe zones."""
+        try:
+            risk_score = 0.0
+            lat, lon = float(location.latitude), float(location.longitude)
+            
+            # Check restricted zones
+            restricted_zones = self.db_session.query(RestrictedZone).filter(
+                RestrictedZone.is_active == True
+            ).all()
+            
+            for zone in restricted_zones:
+                if self._point_in_polygon(lat, lon, zone.coordinates):
+                    # Inside restricted zone - high risk
+                    risk_score = min(1.0, zone.danger_level / 10.0)  # Normalize danger_level to 0-1
+                    break
+            
+            # Check safe zones (lower risk)
+            if risk_score == 0.0:  # Only check if not in restricted zone
+                safe_zones = self.db_session.query(SafeZone).filter(
+                    SafeZone.is_active == True
+                ).all()
+                
+                for zone in safe_zones:
+                    if self._point_in_polygon(lat, lon, zone.coordinates):
+                        risk_score = 0.1  # Low risk in safe zones
+                        break
+                else:
+                    # Not in any zone - medium risk
+                    risk_score = 0.3
+            
+            return risk_score
+            
+        except Exception as e:
+            logger.error(f"Error calculating zone risk score: {e}")
+            return 0.3  # Default medium risk on error
+
+    def _calculate_route_deviation(self, location_history: List[Location]) -> float:
+        """Calculate route deviation based on path straightness and expected patterns."""
+        try:
+            if len(location_history) < 3:
+                return 0.0  # Need at least 3 points to calculate deviation
+            
+            # Calculate the theoretical straight-line distance vs actual path distance
+            start_point = location_history[0]
+            end_point = location_history[-1]
+            
+            # Straight-line distance
+            straight_distance = geodesic(
+                (start_point.latitude, start_point.longitude),
+                (end_point.latitude, end_point.longitude)
+            ).kilometers
+            
+            # Actual path distance
+            actual_distance = 0.0
+            for i in range(1, len(location_history)):
+                prev_loc = location_history[i-1]
+                curr_loc = location_history[i]
+                actual_distance += geodesic(
+                    (prev_loc.latitude, prev_loc.longitude),
+                    (curr_loc.latitude, curr_loc.longitude)
+                ).kilometers
+            
+            # Calculate deviation ratio
+            if straight_distance < 0.01:  # Too close to calculate meaningful deviation
+                return 0.0
+            
+            deviation_ratio = (actual_distance - straight_distance) / straight_distance
+            
+            # Normalize to 0-1 scale (higher values indicate more deviation)
+            # A deviation ratio of 0.5 (50% longer than straight line) = 0.5 deviation score
+            normalized_deviation = min(1.0, deviation_ratio)
+            
+            return max(0.0, normalized_deviation)
+            
+        except Exception as e:
+            logger.error(f"Error calculating route deviation: {e}")
+            return 0.0
+
+    def _calculate_feature_importance(self, X_scaled: np.ndarray) -> np.ndarray:
+        """Calculate feature importance using variance-based method."""
+        try:
+            # For Isolation Forest, we can use feature variance as a proxy for importance
+            feature_variances = np.var(X_scaled, axis=0)
+            # Normalize to sum to 1
+            if np.sum(feature_variances) > 0:
+                feature_importance = feature_variances / np.sum(feature_variances)
+            else:
+                feature_importance = np.ones(len(self.feature_columns)) / len(self.feature_columns)
+            
+            return feature_importance
+            
+        except Exception as e:
+            logger.error(f"Error calculating feature importance: {e}")
+            return np.ones(len(self.feature_columns)) / len(self.feature_columns)
+
+    async def _engineer_location_features(self, location_history: List[Location], current_location: Location) -> List[float]:
         """Engineer features from location history for anomaly detection."""
         try:
             if len(location_history) < 2:
@@ -534,17 +690,41 @@ class AIEngineService:
                 distances.append(distance)
                 speeds.append(speed)
             
-            # Feature engineering
+            # Feature engineering with proper calculations
+            avg_speed = np.mean(speeds) if speeds else 0.0
+            speed_variance = np.var(speeds) if len(speeds) > 1 else 0.0
+            
+            # Calculate inactivity duration (consecutive slow movements)
+            inactivity_count = sum(1 for s in speeds if s < 0.1)
+            inactivity_duration = (inactivity_count / max(len(speeds), 1)) * 100  # Percentage
+            
+            # Calculate location density (unique locations visited)
+            unique_locations = len(set((round(float(loc.latitude), 3), round(float(loc.longitude), 3)) 
+                                     for loc in location_history))
+            location_density = min(unique_locations / max(len(location_history), 1) * 10, 10)  # Normalize to 0-10
+            
+            # Time of day risk (0-1 scale, higher at night)
+            hour = current_location.timestamp.hour
+            time_risk = 0.8 if 0 <= hour <= 5 or 22 <= hour <= 23 else 0.2
+            
+            # Movement consistency (inverse of normalized speed variance)
+            movement_consistency = max(0, 1.0 - min(speed_variance / 10, 1.0))
+            
+            # Calculate zone risk score based on current location
+            zone_risk = await self._calculate_zone_risk_score(current_location)
+            
+            # Calculate route deviation
+            route_deviation = self._calculate_route_deviation(location_history)
+            
             features = [
-                np.mean(speeds) if speeds else 0.0,                    # distance_per_minute
-                sum(1 for s in speeds if s < 0.1) * 15,               # inactivity_duration (minutes)
-                0.0,                                                  # deviation_from_route (placeholder)
-                np.var(speeds) if len(speeds) > 1 else 0.0,          # speed_variance
-                len(set((round(loc.latitude, 3), round(loc.longitude, 3)) 
-                       for loc in location_history)),                 # location_density
-                0.0,                                                  # zone_risk_score (placeholder)
-                current_location.timestamp.hour / 24.0,              # time_of_day_risk
-                1.0 - (np.var(speeds) if len(speeds) > 1 else 0.0)   # movement_consistency
+                avg_speed,                    # distance_per_minute (km/h)
+                inactivity_duration,          # inactivity_duration (percentage)
+                route_deviation,             # deviation_from_route
+                speed_variance,              # speed_variance
+                location_density,            # location_density (normalized)
+                zone_risk,                   # zone_risk_score
+                time_risk,                   # time_of_day_risk
+                movement_consistency         # movement_consistency
             ]
             
             return features[:len(self.feature_columns)]
@@ -580,7 +760,7 @@ class AIEngineService:
                     (func.date(Alert.timestamp) == func.date(Location.timestamp))
                 ).filter(
                     Location.timestamp >= cutoff_time
-                ).order_by(Location.timestamp.desc())
+                ).order_by(Location.timestamp.desc()).limit(5000)  # Limit training data for performance
                 
             elif model_type == "temporal_autoencoder":
                 # Fetch sequential location data for temporal analysis
@@ -595,7 +775,7 @@ class AIEngineService:
                     Tourist, Location.tourist_id == Tourist.id
                 ).filter(
                     Location.timestamp >= cutoff_time
-                ).order_by(Location.tourist_id, Location.timestamp)
+                ).order_by(Location.tourist_id, Location.timestamp).limit(5000)  # Limit training data for performance
                 
             else:
                 logger.error(f"❌ Unknown model type: {model_type}")
@@ -754,6 +934,13 @@ class AIEngineService:
             predictions = model.predict(X_scaled)
             anomaly_ratio = (predictions == -1).mean()
             
+            # Cross-validation for model performance
+            validation_scores = []
+            if len(X_scaled) >= 50:  # Only do cross-validation if enough data
+                from sklearn.model_selection import cross_val_score
+                cv_scores = cross_val_score(model, X_scaled, cv=3, scoring='neg_mean_squared_error')
+                validation_scores = cv_scores.tolist()
+            
             # Store model and scaler
             self.models['isolation_forest'] = model
             self.scalers['isolation_forest'] = scaler
@@ -761,7 +948,10 @@ class AIEngineService:
             self.performance_metrics['isolation_forest'] = {
                 'training_samples': len(X),
                 'anomaly_ratio': float(anomaly_ratio),
-                'training_time': datetime.utcnow().isoformat()
+                'validation_scores': validation_scores,
+                'mean_validation_score': float(np.mean(validation_scores)) if validation_scores else None,
+                'training_time': datetime.utcnow().isoformat(),
+                'feature_importance': self._calculate_feature_importance(X_scaled).tolist()
             }
             
             # Save to disk
@@ -1084,7 +1274,7 @@ class AIEngineService:
             ).filter(
                 Location.timestamp >= cutoff_time,
                 AIAssessment.id.is_(None)  # Not yet assessed
-            ).limit(100).all()  # Process up to 100 locations at a time
+            ).order_by(Location.timestamp.desc()).limit(50).all()  # Process up to 50 locations at a time (reduced for performance)
             
             if recent_locations:
                 logger.info(f"🔍 Processing {len(recent_locations)} recent locations for AI assessment...")

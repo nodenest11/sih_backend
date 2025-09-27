@@ -471,27 +471,27 @@ async def forward_panic_alert(
                     }
                     
         except httpx.TimeoutException:
-            logger.error(f"Timeout forwarding alert {alert_id} to emergency systems")
+            logger.error(f"Timeout sending alert {alert_id} to police")
             return {
                 "success": False,
-                "message": "Timeout connecting to emergency response systems",
+                "message": "Timeout connecting to police dashboard",
                 "alert_id": alert_id
             }
         except Exception as e:
-            logger.error(f"Error forwarding to emergency systems: {e}")
+            logger.error(f"Error sending to police: {e}")
             return {
                 "success": False,
-                "message": f"Emergency system connection error: {str(e)}",
+                "message": f"Police dashboard connection error: {str(e)}",
                 "alert_id": alert_id
             }
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in alert forwarding endpoint: {e}")
+        logger.error(f"Error in police dashboard endpoint: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to forward alert to emergency systems"
+            detail="Failed to send alert to police dashboard"
         )
 
 

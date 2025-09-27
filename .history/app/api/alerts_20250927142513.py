@@ -18,6 +18,79 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Alert Management"])
 
 
+# 🚔 Function to send panic alerts to police dashboard
+async def send_panic_to_police_dashboard(alert: Alert, tourist: Tourist, db: Session) -> dict:
+    """
+    Send panic alert to police dashboard API
+    """
+    try:
+        # Prepare police dashboard data
+        police_data = {
+            "emergency_type": "TOURIST_PANIC_ALERT",
+            "alert_id": alert.id,
+            "severity": alert.severity.value,
+            "timestamp": alert.timestamp.isoformat(),
+            "location": {
+                "latitude": float(alert.latitude) if alert.latitude else None,
+                "longitude": float(alert.longitude) if alert.longitude else None,
+                "coordinates": f"{alert.latitude}, {alert.longitude}" if alert.latitude and alert.longitude else "Unknown"
+            },
+            "tourist_info": {
+                "id": tourist.id,
+                "name": tourist.name,
+                "contact": tourist.contact,
+                "age": tourist.age,
+                "nationality": tourist.nationality,
+                "emergency_contact": tourist.emergency_contact,
+                "safety_score": tourist.safety_score
+            },
+            "alert_details": {
+                "message": alert.message,
+                "description": alert.description,
+                "type": alert.type.value,
+                "auto_generated": alert.auto_generated
+            },
+            "response_required": True,
+            "priority": "CRITICAL"
+        }
+        
+        # Get police dashboard URL (you can configure this in environment variables)
+        police_url = os.getenv("POLICE_DASHBOARD_URL", "http://police-api.example.com/emergency-alerts")
+        police_api_key = os.getenv("POLICE_API_KEY", "")
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-Source": "Tourist-Safety-System",
+            "X-Emergency-Type": "PANIC_ALERT"
+        }
+        
+        if police_api_key:
+            headers["Authorization"] = f"Bearer {police_api_key}"
+        
+        # Send to police dashboard with timeout
+        timeout = httpx.Timeout(10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(police_url, json=police_data, headers=headers)
+            
+            if response.status_code == 200:
+                # Mark alert as acknowledged by police system
+                alert.acknowledged = True
+                alert.acknowledged_by = "Police Dashboard"
+                alert.acknowledged_at = datetime.utcnow()
+                db.commit()
+                
+                return {"success": True, "message": "Alert sent to police dashboard"}
+            else:
+                return {"success": False, "message": f"Police API error: {response.status_code}"}
+                
+    except httpx.TimeoutException:
+        return {"success": False, "message": "Police dashboard timeout"}
+    except httpx.RequestError as e:
+        return {"success": False, "message": f"Police dashboard connection error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "message": f"Unknown error: {str(e)}"}
+
+
 # ✅ Required Endpoint: /pressSOS
 @router.post("/pressSOS", response_model=AlertResponse, status_code=status.HTTP_201_CREATED)
 async def press_sos_endpoint(
@@ -59,10 +132,16 @@ async def press_sos_endpoint(
         
         logger.critical(f"🆘 SOS ALERT created for tourist {panic_data.tourist_id}: {panic_data.message}")
         
-        # TODO: Trigger immediate notifications to:
-        # - Police dashboard
-        # - Family emergency contacts  
-        # - Tourist app
+        # 🚔 Automatically send panic alert to police dashboard
+        try:
+            police_result = await send_panic_to_police_dashboard(alert, tourist, db)
+            if police_result["success"]:
+                logger.critical(f"🚔 Panic alert {alert.id} sent to police dashboard successfully")
+            else:
+                logger.error(f"⚠️ Failed to send panic alert to police: {police_result['message']}")
+        except Exception as e:
+            logger.error(f"❌ Error sending panic alert to police dashboard: {e}")
+            # Continue - alert is still created even if police notification fails
         
         return alert
         
@@ -267,6 +346,127 @@ async def get_alerts(
     return await get_alerts_endpoint(status, severity, alert_type, skip, limit, db)
 
 
+# 📊 New Endpoint: Get Alert Counts
+@router.get("/counts", response_model=dict)
+async def get_alert_counts(db: Session = Depends(get_db)):
+    """
+    Get count of alerts by different categories
+    """
+    try:
+        # Total alerts
+        total_alerts = db.query(func.count(Alert.id)).scalar()
+        
+        # Active alerts
+        active_alerts = db.query(func.count(Alert.id)).filter(Alert.status == AlertStatus.ACTIVE).scalar()
+        
+        # Panic/SOS alerts
+        panic_alerts = db.query(func.count(Alert.id)).filter(Alert.type.in_([AlertType.PANIC, AlertType.SOS])).scalar()
+        
+        # Critical alerts
+        critical_alerts = db.query(func.count(Alert.id)).filter(Alert.severity == AlertSeverity.CRITICAL).scalar()
+        
+        # Today's alerts
+        today = datetime.utcnow().date()
+        today_alerts = db.query(func.count(Alert.id)).filter(
+            func.date(Alert.timestamp) == today
+        ).scalar()
+        
+        # Alerts by severity
+        severity_counts = {}
+        for severity in AlertSeverity:
+            count = db.query(func.count(Alert.id)).filter(Alert.severity == severity).scalar()
+            severity_counts[severity.value] = count
+        
+        # Alerts by type
+        type_counts = {}
+        for alert_type in AlertType:
+            count = db.query(func.count(Alert.id)).filter(Alert.type == alert_type).scalar()
+            type_counts[alert_type.value] = count
+        
+        # Alerts by status
+        status_counts = {}
+        for alert_status in AlertStatus:
+            count = db.query(func.count(Alert.id)).filter(Alert.status == alert_status).scalar()
+            status_counts[alert_status.value] = count
+        
+        # Police dashboard stats
+        police_sent = db.query(func.count(Alert.id)).filter(
+            Alert.acknowledged == True,
+            Alert.acknowledged_by == "Police Dashboard"
+        ).scalar()
+        
+        return {
+            "summary": {
+                "total_alerts": total_alerts,
+                "active_alerts": active_alerts,
+                "panic_sos_alerts": panic_alerts,
+                "critical_alerts": critical_alerts,
+                "today_alerts": today_alerts,
+                "police_notified": police_sent
+            },
+            "by_severity": severity_counts,
+            "by_type": type_counts,
+            "by_status": status_counts,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting alert counts: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get alert counts"
+        )
+
+
+# 🚔 New Endpoint: Get Police Dashboard Status
+@router.get("/police-status", response_model=dict)
+async def get_police_dashboard_status(db: Session = Depends(get_db)):
+    """
+    Get status of alerts sent to police dashboard
+    """
+    try:
+        # Alerts sent to police
+        police_alerts = db.query(Alert).filter(
+            Alert.acknowledged == True,
+            Alert.acknowledged_by == "Police Dashboard"
+        ).all()
+        
+        # Recent police alerts (last 24 hours)
+        recent_time = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        recent_police_alerts = db.query(Alert).filter(
+            Alert.acknowledged == True,
+            Alert.acknowledged_by == "Police Dashboard",
+            Alert.acknowledged_at >= recent_time
+        ).count()
+        
+        return {
+            "police_dashboard_status": {
+                "total_sent_to_police": len(police_alerts),
+                "sent_today": recent_police_alerts,
+                "last_sent": police_alerts[-1].acknowledged_at.isoformat() if police_alerts else None
+            },
+            "recent_police_alerts": [
+                {
+                    "alert_id": alert.id,
+                    "tourist_id": alert.tourist_id,
+                    "severity": alert.severity.value,
+                    "message": alert.message,
+                    "sent_at": alert.acknowledged_at.isoformat(),
+                    "location": f"{alert.latitude}, {alert.longitude}" if alert.latitude else None
+                }
+                for alert in police_alerts[-10:]  # Last 10 alerts sent to police
+            ],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting police dashboard status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get police dashboard status"
+        )
+
+
 @router.get("/{alert_id}", response_model=AlertResponse)
 async def get_alert(
     alert_id: int,
@@ -379,174 +579,4 @@ async def acknowledge_alert(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to acknowledge alert"
-        )
-
-
-@router.post("/forwardAlert/{alert_id}", response_model=dict)
-async def forward_panic_alert(
-    alert_id: int,
-    db: Session = Depends(get_db)
-):
-    """
-    Forward panic alert to emergency response systems.
-    Sends alert to police, emergency services, and other response systems.
-    """
-    try:
-        # Get the panic alert
-        alert = db.query(Alert).filter(
-            Alert.id == alert_id,
-            Alert.type.in_([AlertType.PANIC, AlertType.SOS])
-        ).first()
-        
-        if not alert:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Panic/SOS alert not found"
-            )
-        
-        # Get tourist info
-        tourist = db.query(Tourist).filter(Tourist.id == alert.tourist_id).first()
-        if not tourist:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Tourist not found"
-            )
-        
-        # Prepare emergency response data
-        emergency_data = {
-            "alert_id": alert.id,
-            "emergency_type": "TOURIST_PANIC_SOS",
-            "severity": alert.severity.value,
-            "timestamp": alert.timestamp.isoformat(),
-            "location": {
-                "latitude": alert.latitude,
-                "longitude": alert.longitude
-            },
-            "tourist": {
-                "id": tourist.id,
-                "name": tourist.name,
-                "contact": tourist.contact,
-                "emergency_contact": tourist.emergency_contact
-            },
-            "message": alert.message,
-            "priority": "CRITICAL"
-        }
-        
-        # Emergency response URL (configurable via environment)
-        emergency_url = os.getenv("EMERGENCY_RESPONSE_URL", "http://emergency-api.example.com/alert")
-        
-        # Send to emergency response systems
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    emergency_url,
-                    json=emergency_data,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-Source": "Tourist-Safety-System"
-                    }
-                )
-                
-                if response.status_code == 200:
-                    # Mark alert as forwarded
-                    alert.acknowledged = True
-                    alert.acknowledged_by = "Emergency Response System"
-                    alert.acknowledged_at = datetime.utcnow()
-                    db.commit()
-                    
-                    logger.critical(f"� Alert {alert_id} forwarded to emergency response systems successfully")
-                    
-                    return {
-                        "success": True,
-                        "message": "Alert forwarded to emergency response systems",
-                        "alert_id": alert_id,
-                        "response_status": response.status_code
-                    }
-                else:
-                    logger.error(f"Emergency response system returned status {response.status_code}")
-                    return {
-                        "success": False,
-                        "message": f"Emergency system error: {response.status_code}",
-                        "alert_id": alert_id
-                    }
-                    
-        except httpx.TimeoutException:
-            logger.error(f"Timeout forwarding alert {alert_id} to emergency systems")
-            return {
-                "success": False,
-                "message": "Timeout connecting to emergency response systems",
-                "alert_id": alert_id
-            }
-        except Exception as e:
-            logger.error(f"Error forwarding to emergency systems: {e}")
-            return {
-                "success": False,
-                "message": f"Emergency system connection error: {str(e)}",
-                "alert_id": alert_id
-            }
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in alert forwarding endpoint: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to forward alert to emergency systems"
-        )
-
-
-@router.get("/panicAlertsCount", response_model=dict)
-async def get_panic_alerts_count(
-    db: Session = Depends(get_db)
-):
-    """
-    Get count of panic/SOS alerts from database.
-    Returns total count and breakdown by status.
-    """
-    try:
-        # Count total panic/SOS alerts
-        total_count = db.query(Alert).filter(
-            Alert.type.in_([AlertType.PANIC, AlertType.SOS])
-        ).count()
-        
-        # Count by status
-        active_count = db.query(Alert).filter(
-            Alert.type.in_([AlertType.PANIC, AlertType.SOS]),
-            Alert.status == AlertStatus.ACTIVE
-        ).count()
-        
-        acknowledged_count = db.query(Alert).filter(
-            Alert.type.in_([AlertType.PANIC, AlertType.SOS]),
-            Alert.status == AlertStatus.ACKNOWLEDGED
-        ).count()
-        
-        resolved_count = db.query(Alert).filter(
-            Alert.type.in_([AlertType.PANIC, AlertType.SOS]),
-            Alert.status == AlertStatus.RESOLVED
-        ).count()
-        
-        # Count by severity
-        critical_count = db.query(Alert).filter(
-            Alert.type.in_([AlertType.PANIC, AlertType.SOS]),
-            Alert.severity == AlertSeverity.CRITICAL
-        ).count()
-        
-        logger.info(f"Retrieved panic alert counts: Total={total_count}, Active={active_count}")
-        
-        return {
-            "total_panic_alerts": total_count,
-            "breakdown": {
-                "active": active_count,
-                "acknowledged": acknowledged_count,
-                "resolved": resolved_count,
-                "critical_severity": critical_count
-            },
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting panic alerts count: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get panic alerts count"
         )

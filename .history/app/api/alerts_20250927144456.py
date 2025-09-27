@@ -382,14 +382,14 @@ async def acknowledge_alert(
         )
 
 
-@router.post("/forwardAlert/{alert_id}", response_model=dict)
-async def forward_panic_alert(
+@router.post("/sendPanicToPoliceDashboard/{alert_id}", response_model=dict)
+async def send_panic_to_police_dashboard(
     alert_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Forward panic alert to emergency response systems.
-    Sends alert to police, emergency services, and other response systems.
+    Send panic alert to police dashboard.
+    This endpoint forwards panic/SOS alerts to police systems.
     """
     try:
         # Get the panic alert
@@ -412,8 +412,8 @@ async def forward_panic_alert(
                 detail="Tourist not found"
             )
         
-        # Prepare emergency response data
-        emergency_data = {
+        # Prepare police dashboard data
+        police_data = {
             "alert_id": alert.id,
             "emergency_type": "TOURIST_PANIC_SOS",
             "severity": alert.severity.value,
@@ -432,15 +432,15 @@ async def forward_panic_alert(
             "priority": "CRITICAL"
         }
         
-        # Emergency response URL (configurable via environment)
-        emergency_url = os.getenv("EMERGENCY_RESPONSE_URL", "http://emergency-api.example.com/alert")
+        # Police dashboard URL (configurable via environment)
+        police_url = os.getenv("POLICE_DASHBOARD_URL", "http://police-api.example.com/emergency")
         
-        # Send to emergency response systems
+        # Send to police dashboard
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
-                    emergency_url,
-                    json=emergency_data,
+                    police_url,
+                    json=police_data,
                     headers={
                         "Content-Type": "application/json",
                         "X-Source": "Tourist-Safety-System"
@@ -448,50 +448,50 @@ async def forward_panic_alert(
                 )
                 
                 if response.status_code == 200:
-                    # Mark alert as forwarded
+                    # Mark alert as sent to police
                     alert.acknowledged = True
-                    alert.acknowledged_by = "Emergency Response System"
+                    alert.acknowledged_by = "Police Dashboard"
                     alert.acknowledged_at = datetime.utcnow()
                     db.commit()
                     
-                    logger.critical(f"� Alert {alert_id} forwarded to emergency response systems successfully")
+                    logger.critical(f"🚔 Panic alert {alert_id} sent to police dashboard successfully")
                     
                     return {
                         "success": True,
-                        "message": "Alert forwarded to emergency response systems",
+                        "message": "Panic alert sent to police dashboard",
                         "alert_id": alert_id,
-                        "response_status": response.status_code
+                        "police_status": response.status_code
                     }
                 else:
-                    logger.error(f"Emergency response system returned status {response.status_code}")
+                    logger.error(f"Police dashboard returned status {response.status_code}")
                     return {
                         "success": False,
-                        "message": f"Emergency system error: {response.status_code}",
+                        "message": f"Police dashboard error: {response.status_code}",
                         "alert_id": alert_id
                     }
                     
         except httpx.TimeoutException:
-            logger.error(f"Timeout forwarding alert {alert_id} to emergency systems")
+            logger.error(f"Timeout sending alert {alert_id} to police")
             return {
                 "success": False,
-                "message": "Timeout connecting to emergency response systems",
+                "message": "Timeout connecting to police dashboard",
                 "alert_id": alert_id
             }
         except Exception as e:
-            logger.error(f"Error forwarding to emergency systems: {e}")
+            logger.error(f"Error sending to police: {e}")
             return {
                 "success": False,
-                "message": f"Emergency system connection error: {str(e)}",
+                "message": f"Police dashboard connection error: {str(e)}",
                 "alert_id": alert_id
             }
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in alert forwarding endpoint: {e}")
+        logger.error(f"Error in police dashboard endpoint: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to forward alert to emergency systems"
+            detail="Failed to send alert to police dashboard"
         )
 
 

@@ -86,7 +86,11 @@ Add Swagger docs (/docs).
 Seed database with demo data on startup.
 
 
+anonpublic : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxZW5xd2Z1eXdpZ2hhaW5udWpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgyMDg5NTgsImV4cCI6MjA3Mzc4NDk1OH0.qztg3ZGxTCGZwDjIKlnvHtdGODdMxPxy2ntQg6GkHAs
 
+service_rolesecret : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxZW5xd2Z1eXdpZ2hhaW5udWpoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1ODIwODk1OCwiZXhwIjoyMDczNzg0OTU4fQ._Z6Fk7qOP1D72rZrJwYt6_A3oMZPf5GZEF8xJ_BTKhg
+
+supabase url : https://tqenqwfuywighainnujh.supabase.co
 
 
 # 🧑‍💻 AI/ML Developer Prompt for Hybrid Tourist Safety System
@@ -196,3 +200,185 @@ You will receive **tourist movement data** from the backend in the following for
 ---
 
 ⚡ Use this guide to **understand how the AI works** and **implement each algorithm** step by step.
+
+
+
+
+📘 Smart Tourist Safety & Incident Response System
+
+Database Schema Documentation
+
+1. Tourists (public.tourists)
+
+Stores personal and safety information of tourists.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+name	varchar	Required
+contact	varchar	Required, Unique
+email	varchar	Optional
+trip_info	jsonb	Default: {}
+emergency_contact	varchar	Required
+safety_score	integer	Default 100, Range 0–100
+age	integer	Range 0–150
+nationality	varchar	Default: Indian
+passport_number	varchar	Optional
+is_active	boolean	Default: true
+last_location_update	timestamptz	Nullable
+created_at	timestamptz	Default now()
+updated_at	timestamptz	Default now()
+2. Locations (public.locations)
+
+Captures real-time GPS tracking data for tourists.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+tourist_id	bigint (FK)	→ tourists.id
+latitude	numeric	Range -90 to 90
+longitude	numeric	Range -180 to 180
+altitude	numeric	Optional
+accuracy	numeric	Optional
+speed	numeric	Optional
+heading	numeric	0–360
+timestamp	timestamptz	Default now()
+created_at	timestamptz	Default now()
+3. Location History (public.location_history)
+
+Compressed travel history for analytics.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+tourist_id	bigint (FK)	→ tourists.id
+date	date	Required
+location_data	jsonb	Required
+total_distance	numeric	Optional
+unique_locations	integer	Optional
+created_at	timestamptz	Default now()
+4. Alerts (public.alerts)
+
+Stores safety alerts triggered manually or automatically.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+tourist_id	bigint (FK)	→ tourists.id
+type	varchar	Enum: panic, geofence, anomaly, temporal, low_safety_score, sos, manual
+severity	varchar	Enum: LOW, MEDIUM, HIGH, CRITICAL (default: LOW)
+message	text	Required
+description	text	Optional
+latitude	numeric	Optional
+longitude	numeric	Optional
+ai_confidence	numeric	0–1
+auto_generated	boolean	Default: false
+acknowledged	boolean	Default: false
+acknowledged_by	varchar	Optional
+acknowledged_at	timestamptz	Optional
+resolved_by	varchar	Optional
+resolved_at	timestamptz	Optional
+resolution_notes	text	Optional
+timestamp	timestamptz	Default now()
+status	varchar	Enum: active, acknowledged, resolved, false_alarm (default: active)
+5. Safe Zones (public.safe_zones)
+
+Defines safe/tourist-friendly areas.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+name	varchar	Required
+description	text	Optional
+zone_type	varchar	Enum: tourist_area, hotel, restaurant, transport_hub, hospital, police_station
+coordinates	jsonb	Required (GeoJSON polygon)
+city	varchar	Optional
+state	varchar	Optional
+country	varchar	Default: India
+safety_rating	integer	1–5, Default: 5
+is_active	boolean	Default: true
+created_at	timestamptz	Default now()
+updated_at	timestamptz	Default now()
+6. Restricted Zones (public.restricted_zones)
+
+Defines dangerous or restricted areas.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+name	varchar	Required
+description	text	Optional
+zone_type	varchar	Enum: restricted, military, private, dangerous, construction, natural_hazard
+coordinates	jsonb	Required (GeoJSON polygon)
+city	varchar	Optional
+state	varchar	Optional
+country	varchar	Default: India
+danger_level	integer	1–5, Default: 3
+buffer_zone_meters	integer	Default: 100
+is_active	boolean	Default: true
+created_at	timestamptz	Default now()
+updated_at	timestamptz	Default now()
+7. AI Assessments (public.ai_assessments)
+
+Aggregated AI/ML safety evaluations.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+tourist_id	bigint (FK)	→ tourists.id
+location_id	bigint (FK)	→ locations.id
+safety_score	integer	0–100
+severity	varchar	Enum: SAFE, WARNING, CRITICAL
+geofence_alert	boolean	Default: false
+anomaly_score	numeric	0–1
+temporal_risk_score	numeric	0–1
+supervised_prediction	numeric	0–1
+confidence_level	numeric	0–1 (required)
+recommended_action	varchar	Optional
+alert_message	text	Optional
+model_versions	jsonb	Default: {}
+processing_time_ms	numeric	Optional
+created_at	timestamptz	Default now()
+8. AI Model Predictions (public.ai_model_predictions)
+
+Detailed model-level AI predictions.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+assessment_id	bigint (FK)	→ ai_assessments.id
+model_name	varchar	Enum: geofence, isolation_forest, temporal_autoencoder, lightgbm_classifier
+prediction_value	numeric	0–1
+confidence	numeric	0–1
+processing_time_ms	numeric	Optional
+model_version	varchar	Optional
+metadata	jsonb	Default: {}
+created_at	timestamptz	Default now()
+9. API Logs (public.api_logs)
+
+Logs API usage and errors.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+endpoint	varchar	Required
+method	varchar	Required
+status_code	integer	Required
+response_time_ms	numeric	Optional
+user_agent	text	Optional
+ip_address	inet	Optional
+request_data	jsonb	Optional
+error_message	text	Optional
+created_at	timestamptz	Default now()
+10. System Metrics (public.system_metrics)
+
+Stores system health and performance metrics.
+
+Column	Type	Constraints
+id	bigint (PK)	Auto-generated
+metric_type	varchar	Enum: cpu_usage, memory_usage, active_tourists, requests_per_minute, error_rate
+value	numeric	Required
+unit	varchar	Optional
+metadata	jsonb	Default: {}
+created_at	timestamptz	Default now()
+11. Spatial Reference System (public.spatial_ref_sys)
+
+(Internal PostGIS table – not usually edited by users)
+
+Column	Type	Constraints
+srid	integer (PK)	>0, ≤998999
+auth_name	varchar	Optional
+auth_srid	integer	Optional
+srtext	varchar	Optional
+proj4text	varchar	Optional

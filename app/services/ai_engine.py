@@ -10,13 +10,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
 import os
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, and_, or_
 import json
 import pickle
 from geopy.distance import geodesic
 
-from app.database import SessionLocal, get_db
+from app.database import get_db, get_supabase
 from app.models import (
     Tourist, Location, Alert, AIAssessment, AIModelPrediction, 
     RestrictedZone, SafeZone, AlertType, AlertSeverity, AISeverity, AIModelName

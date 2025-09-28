@@ -7,7 +7,16 @@ import time
 
 from app.config import settings
 from app.database import create_tables, check_db_connection
-from app.api import tourists, locations, alerts, ai_assessment, efir, frontend, realtime
+
+# Import all Supabase-based API modules
+import app.api.tourists_supabase as tourists
+import app.api.locations_supabase as locations
+import app.api.alerts_supabase as alerts
+import app.api.efir_supabase as efir
+import app.api.zones_supabase as zones
+import app.api.safety_supabase as safety
+from app.api import frontend, realtime  # Keep original if not yet migrated
+
 from app.services.seed_data import seed_database
 
 # Configure logging
@@ -37,15 +46,12 @@ async def lifespan(app: FastAPI):
     # Initialize AI services for real-time processing
     logger.info("Initializing AI services...")
     try:
-        from app.services.ai_engine import AIEngineService
-        from app.api.ai_assessment import set_ai_engine
+        from app.services.ai_engine_supabase import AIEngineService
         
         ai_service = AIEngineService()
         await ai_service.initialize()
         
-        # Set global AI engine for API endpoints
-        set_ai_engine(ai_service)
-        
+        # We're using simpler AI models directly in the API modules
         logger.info("AI services initialized successfully")
     except Exception as e:
         logger.error(f"Error initializing AI services: {e}")
@@ -101,8 +107,9 @@ async def log_requests(request: Request, call_next):
 app.include_router(tourists.router, prefix="/api/v1")
 app.include_router(locations.router, prefix="/api/v1")  
 app.include_router(alerts.router, prefix="/api/v1")
-app.include_router(ai_assessment.router, prefix="/api/v1")
+app.include_router(safety.router, prefix="/api/v1")
 app.include_router(efir.router, prefix="/api/v1")
+app.include_router(zones.router, prefix="/api/v1")
 app.include_router(frontend.router, prefix="/api/v1")
 app.include_router(realtime.router, prefix="/api/v1")
 

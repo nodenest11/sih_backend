@@ -181,7 +181,7 @@ class BulkAlertAction(BaseModel):
 
 # Export schemas
 class ExportRequest(BaseModel):
-    format: str = Field(..., regex="^(csv|json|pdf)$")
+    format: str = Field(..., pattern="^(csv|json|pdf)$")
     date_from: datetime
     date_to: datetime
     include_tourists: bool = True

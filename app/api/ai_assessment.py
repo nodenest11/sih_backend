@@ -1,40 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
-from app.database import get_db
-from app.models import AIAssessment, AIModelPrediction, Tourist, Location, Alert, AlertSeverity, AISeverity
-from app.services.ai_engine import AIEngineService
-from app.services.safety import SafetyService
+from app.database import get_db, get_supabase
+from app.services.ai_engine_supabase import AIEngineService, get_ai_engine as get_global_ai_engine
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai", tags=["AI Assessment"])
 
-# Global AI engine instance (will be initialized on startup)
-ai_engine: Optional[AIEngineService] = None
-
-
+# Use the global AI engine from ai_engine_supabase
 def get_ai_engine() -> AIEngineService:
     """Get the global AI engine instance."""
-    global ai_engine
-    if ai_engine is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI Engine not initialized"
-        )
-    return ai_engine
+    return get_global_ai_engine()
 
 
 @router.post("/initialize")
 async def initialize_ai_engine():
     """Initialize the AI engine (for manual initialization)."""
-    global ai_engine
     try:
-        if ai_engine is None:
-            ai_engine = AIEngineService()
-            await ai_engine.initialize()
+        engine = get_ai_engine()
+        await engine.initialize()
         
         return {
             "message": "AI Engine initialized successfully",
